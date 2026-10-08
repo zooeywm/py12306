@@ -28,6 +28,15 @@
     .seats label{display:inline-flex;align-items:center;gap:5px;font-weight:400;font-size:14px}.seats input{width:auto}
     .form-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:20px}.hide{display:none}
     .message{min-height:22px;color:var(--warn);font-size:13px;margin-top:8px}
+    .table-scroll{overflow-x:auto;margin-top:14px}
+    .availability-table{width:100%;border-collapse:collapse;white-space:nowrap;font-size:13px}
+    .availability-table th,.availability-table td{padding:10px 12px;border-bottom:1px solid var(--border);text-align:left}
+    .availability-table th{color:var(--muted);font-weight:600}
+    .availability-table tr:last-child td{border-bottom:0}
+    .avail-yes{color:var(--accent);font-weight:650}.avail-no{color:var(--muted)}
+    .changes{margin:14px 0 0;padding:0 0 0 18px;font-size:13px}
+    .changes li{margin:5px 0}.route-title{margin:20px 0 5px;font-size:15px}
+
     @media(max-width:600px){.form-grid{grid-template-columns:1fr}.task-actions{width:100%;justify-content:flex-start}.top{align-items:flex-start}}
   </style>
 </head>
@@ -43,6 +52,13 @@
   </header>
   <p class="note">仅提供余票监控，不提交订单；所有新建或修改的任务均设为 monitor_only。页面仅限本机使用。</p>
   <section id="tasks"><div class="card empty">正在加载任务…</div></section>
+  <section class="card" aria-labelledby="avail-title">
+    <div class="top" style="margin-bottom:6px;align-items:center">
+      <div><h2 id="avail-title" style="margin:0">实时余票</h2><p class="muted" style="font-size:13px">每 5 秒从本地缓存更新，不增加 12306 查询次数；「有」不保证可购买指定张数。</p></div>
+      <button id="availability-refresh" class="small" type="button">刷新余票</button>
+    </div>
+    <div id="availability-data" aria-live="polite" aria-atomic="false" class="muted">等待查询数据…</div>
+  </section>
   <section id="editor" class="card hide" aria-labelledby="editor-title">
     <h2 id="editor-title">新增任务</h2>
     <form id="task-form">
@@ -120,6 +136,50 @@
       if(!canEdit){$('editor').classList.add('hide');addText($('tasks'),'p','检测到 USER_ACCOUNTS 非空：网页编辑已被禁用。请先切换为纯监控模式。','note');}
     } catch(e){$('tasks').replaceChildren();addText($('tasks'),'div','加载失败：'+e.message,'card empty');}
   }
+  function renderAvailability(groups){
+    const root=$('availability-data'); root.replaceChildren();
+    if(!groups.length){addText(root,'p','暂无运行中的纯监控任务。请先启动任务。','muted');return;}
+    let shown=0;
+    for(const group of groups){
+      for(const route of group.routes){
+        shown++;
+        const title=addText(root,'h3',`${group.job_name} · ${route.date} ${route.left} → ${route.arrive}`,'route-title');
+        const rows=[...route.rows].sort((a,b)=>a.departure.localeCompare(b.departure)||a.train.localeCompare(b.train)||a.seat.localeCompare(b.seat));
+        const available=rows.filter(x=>x.available).length;
+        addText(root,'p',`更新于 ${route.updated_at} · 共 ${rows.length} 个车次/席别组合 · ${available} 个可售`,'muted');
+        const scroller=document.createElement('div');scroller.className='table-scroll';
+        const table=document.createElement('table');table.className='availability-table';
+        const head=document.createElement('thead'),header=document.createElement('tr');
+        ['车次','出发','到达','席别','余票','最近一次变化'].forEach(name=>addText(header,'th',name));
+        head.append(header);table.append(head);
+        const body=document.createElement('tbody');
+        rows.forEach(item=>{
+          const tr=document.createElement('tr');
+          for(const value of [item.train,item.departure,item.arrival,item.seat])addText(tr,'td',value);
+          addText(tr,'td',item.quantity,item.available?'avail-yes':'avail-no');
+          addText(tr,'td',item.change?`${item.change} · ${item.changed_at}`:'—');
+          body.append(tr);
+        });
+        if(!rows.length){const tr=document.createElement('tr'),td=addText(tr,'td','当前筛选范围内暂无返回车次','muted');td.colSpan=6;body.append(tr);}
+        table.append(body);scroller.append(table);root.append(scroller);
+        if(route.changes&&route.changes.length){
+          addText(root,'h4','最近状态变化','route-title');
+          const list=document.createElement('ol');list.className='changes';
+          route.changes.slice(0,10).forEach(change=>addText(list,'li',`${change.time} · ${change.train} ${change.seat}：${change.description}`));
+          root.append(list);
+        }
+      }
+    }
+    if(!shown)addText(root,'p','任务已启动，等待首次查询成功后显示余票。','muted');
+  }
+  let availabilityFetching=false;
+  async function refreshAvailability(){
+    if(availabilityFetching)return;
+    availabilityFetching=true;
+    try{const data=await api('/manage/api/availability');renderAvailability(data.groups||[]);}
+    catch(e){$('availability-data').replaceChildren();addText($('availability-data'),'p','获取余票失败：'+e.message,'muted');}
+    finally{availabilityFetching=false;}
+  }
   function openEditor(task=null){
     editing=task?task.index:null; $('editor-title').textContent=task?'编辑任务':'新增任务';
     $('job_name').value=task?task.job_name:'';
@@ -139,7 +199,7 @@
     train_numbers:$('train_numbers').value,except_train_numbers:$('except_train_numbers').value,
     seats:[...document.querySelectorAll('input[name="seat"]:checked')].map(e=>e.value),enabled: editing===null?true:items[editing].enabled
   };}
-  async function operation(url,method,body){busy=true;render();try{await api(url,method,body);$('editor').classList.add('hide');await refresh();}catch(e){$('error').textContent=e.message;alert('操作失败：'+e.message);}finally{busy=false;render();}}
+  async function operation(url,method,body){busy=true;render();try{await api(url,method,body);$('editor').classList.add('hide');await refresh();await refreshAvailability();}catch(e){$('error').textContent=e.message;alert('操作失败：'+e.message);}finally{busy=false;render();}}
   async function toggle(task){await operation('/manage/api/tasks/'+task.index+'/enabled','PATCH',{enabled:!task.enabled});}
   async function remove(task){if(confirm(`确认删除任务“${task.job_name}”？`))await operation('/manage/api/tasks/'+task.index,'DELETE',{});}
   $('task-form').addEventListener('submit',async ev=>{ev.preventDefault();
@@ -147,14 +207,16 @@
     await operation(url,editing===null?'POST':'PUT',payload());
   });
   $('add').addEventListener('click',()=>openEditor());$('cancel').addEventListener('click',()=>$('editor').classList.add('hide'));
-  $('refresh').addEventListener('click',refresh);
+  $('refresh').addEventListener('click',()=>{refresh();refreshAvailability();});
+  $('availability-refresh').addEventListener('click',refreshAvailability);
   const suggestions=(id,target)=>{
     let timer;$(id).addEventListener('input',()=>{clearTimeout(timer);const q=$(id).value.trim();if(!q){$(target).replaceChildren();return;}
       timer=setTimeout(async()=>{try{const data=await api('/manage/api/stations?q='+encodeURIComponent(q));const list=$(target);list.replaceChildren();
         data.stations.forEach(name=>{const item=document.createElement('option');item.value=name;list.append(item);});}catch(e){}},220);
     });
   };
-  suggestions('left','left-options');suggestions('arrive','arrive-options');refresh();
+  suggestions('left','left-options');suggestions('arrive','arrive-options');refresh();refreshAvailability();
+  setInterval(()=>{if(!document.hidden)refreshAvailability();},5000);
 })();
 </script>
 </body>

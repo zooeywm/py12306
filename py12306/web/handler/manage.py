@@ -243,6 +243,30 @@ def tasks_list():
     return jsonify(tasks=_safe_tasks(Config().QUERY_JOBS), can_edit=not bool(Config().USER_ACCOUNTS))
 
 
+@manage.route('/manage/api/availability', methods=['GET'])
+@_auth_required
+def availability():
+    """Read already queried in-memory snapshots; never requests tickets or orders."""
+    groups = []
+    # A list copy is important because paused/edited jobs may be removed in a
+    # different thread while the browser is polling.
+    for job in list(Query().jobs):
+        if not getattr(job, 'is_alive', True):
+            continue
+        if not (getattr(job, 'monitor_only', False) or not Config().USER_ACCOUNTS):
+            continue
+        monitor = getattr(job, 'seat_monitor', None)
+        if monitor is None:
+            continue
+        groups.append({
+            'job_name': job.job_name,
+            'routes': monitor.get_dashboard(),
+        })
+    response = jsonify(groups=groups)
+    response.headers['Cache-Control'] = 'no-store'
+    return response
+
+
 @manage.route('/manage/api/stations', methods=['GET'])
 @_auth_required
 def station_lookup():
