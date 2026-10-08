@@ -42,12 +42,14 @@ class Query:
             jobs_do(self.jobs, 'update_interval')
 
     def update_query_jobs(self, auto=False):
-        self.query_jobs = Config().QUERY_JOBS
+        self.query_jobs = [job for job in Config().QUERY_JOBS if job.get('enabled', True)]
         if auto:
             QueryLog.add_quick_log(QueryLog.MESSAGE_JOBS_DID_CHANGED).flush()
             self.refresh_jobs()
-            if not Config().is_slave():
-                jobs_do(self.jobs, 'check_passengers')
+            if not Config().is_slave() and Config().USER_ACCOUNTS:
+                for job in list(self.jobs):
+                    if not job.monitor_only:
+                        job.check_passengers()
 
     @classmethod
     def run(cls):
@@ -75,7 +77,10 @@ class Query:
                 if Const.IS_TEST: return
                 stay_second(self.retry_time)
             else:
-                if not self.jobs: break
+                if not self.jobs:
+                    if Const.IS_TEST: return
+                    stay_second(1)
+                    continue
                 self.is_in_thread = False
                 jobs_do(self.jobs, 'run')
                 if Const.IS_TEST: return
@@ -104,7 +109,7 @@ class Query:
                     create_thread_and_run(jobs=job_ins, callback_name='run', wait=Const.IS_TEST)
             allow_jobs.append(job_ins)
 
-        for job in self.jobs:  # 退出已删除 Job
+        for job in list(self.jobs):  # 退出已删除 Job
             if job not in allow_jobs: job.destroy()
 
         QueryLog.print_init_jobs(jobs=self.jobs)

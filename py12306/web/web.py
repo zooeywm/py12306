@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 import json
 import logging
+import secrets
 from datetime import timedelta
 
 from flask import Flask, request
@@ -23,7 +24,7 @@ class Web:
         self.log.setLevel(logging.ERROR)
 
         self.register_blueprint()
-        self.session.config['JWT_SECRET_KEY'] = 'secret'  # 目前都是本地，暂不用放配置文件
+        self.session.config['JWT_SECRET_KEY'] = secrets.token_hex(32)  # 目前都是本地，暂不用放配置文件
         self.session.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(seconds=60 * 60 * 24 * 7)  # Token 超时时间 7 天
         self.jwt = JWTManager(self.session)
 
@@ -38,6 +39,8 @@ class Web:
         self.session.register_blueprint(app)
         self.session.register_blueprint(query)
         self.session.register_blueprint(log)
+        from py12306.web.handler.manage import manage
+        self.session.register_blueprint(manage)
 
     @classmethod
     def run(cls):
@@ -55,7 +58,7 @@ class Web:
         debug = False
         if is_main_thread():
             debug = Config().IS_DEBUG
-        self.session.run(debug=debug, port=Config().WEB_PORT, host='0.0.0.0')
+        self.session.run(debug=debug, port=Config().WEB_PORT, host='127.0.0.1')
 
 
 if __name__ == '__main__':

@@ -34,7 +34,7 @@ class Event():
         if not Config().is_cluster_enabled() or Config().is_master():
             query = Query.wait_for_ready()
             for job in query.jobs:
-                if job.account_key == data.get('key'):
+                if job.account_key == data.get('key') and not getattr(job, 'monitor_only', False):
                     create_thread_and_run(job, 'check_passengers', Const.IS_TEST)  # 检查乘客信息 防止提交订单时才检查
                     stay_second(1)
 

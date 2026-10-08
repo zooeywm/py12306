@@ -78,6 +78,7 @@ class Job:
 
     def init_data(self, info):
         self.id = md5(info)
+        self.monitor_only = bool(info.get('monitor_only', False))
         self.left_dates = info.get('left_dates')
         self.stations = info.get('stations')
         self.stations = [self.stations] if isinstance(self.stations, dict) else self.stations
@@ -99,12 +100,12 @@ class Job:
                 parts = period['from'].split(':')
                 if len(parts) == 2:
                     self.from_time = timedelta(
-                        hours=int(parts[0]), seconds=int(parts[1]))
+                        hours=int(parts[0]), minutes=int(parts[1]))
             if 'to' in period:
                 parts = period['to'].split(':')
                 if len(parts) == 2:
                     self.to_time = timedelta(
-                        hours=int(parts[0]), seconds=int(parts[1]))
+                        hours=int(parts[0]), minutes=int(parts[1]))
 
     def update_interval(self):
         self.interval = self.query.interval
@@ -188,7 +189,7 @@ class Job:
         results = self.get_results(response)
         if not results:
             return False
-        if User.is_empty():
+        if User.is_empty() or self.monitor_only:
             self.seat_monitor.update(self, results)
             return
         for result in results:

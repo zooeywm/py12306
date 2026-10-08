@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>任务管理 · py12306</title>
+  <style>
+    :root{color-scheme:light dark;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans CJK SC",sans-serif;--bg:#f4f6f9;--card:#fff;--text:#202935;--muted:#64748b;--border:#dce2ec;--accent:#1458ad;--soft:#eaf1fc;--warn:#b45309}
+    @media(prefers-color-scheme:dark){:root{--bg:#101722;--card:#1a2533;--text:#e5eaf2;--muted:#9aabbd;--border:#324153;--accent:#81b8ff;--soft:#263951;--warn:#ffcc78}}
+    *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--text);font-size:15px;line-height:1.5}
+    main{max-width:1060px;padding:26px 18px 64px;margin:auto}
+    h1{font-size:25px;letter-spacing:-.5px;margin:4px 0 6px}h2{font-size:18px;margin:0 0 14px}
+    p{margin:4px 0}.muted{color:var(--muted)}.top{display:flex;flex-wrap:wrap;align-items:flex-start;justify-content:space-between;gap:18px;margin-bottom:18px}
+    .top a{color:var(--accent);text-decoration:none}.actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+    button{font:inherit;cursor:pointer;border:1px solid var(--border);border-radius:9px;background:var(--card);color:var(--text);padding:8px 14px}
+    button:hover{border-color:var(--accent)}button:disabled{opacity:.4;cursor:not-allowed}.primary{background:#175eb3;color:#fff;border-color:#175eb3}
+    .small{font-size:13px;padding:6px 10px}.danger{color:#bd4242}.note{color:var(--warn);font-size:13px;margin:9px 0 20px}
+    .card{background:var(--card);border:1px solid var(--border);border-radius:13px;padding:18px;margin-bottom:12px}
+    .task{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap}.task-body{flex:1;min-width:240px}
+    .task h3{font-size:17px;margin:0 0 6px;font-weight:650}.task .meta{font-size:13px;color:var(--muted);margin-top:4px;overflow-wrap:anywhere}
+    .pill{font-size:12px;border:1px solid var(--border);border-radius:20px;padding:1px 8px;vertical-align:middle;font-weight:500}
+    .on{background:var(--soft);color:var(--accent);border-color:transparent}.off{color:var(--muted)}
+    .task-actions{display:flex;gap:7px;align-self:center;align-items:center}.empty{padding:35px;text-align:center;color:var(--muted)}
+    .form-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:13px}.field{display:flex;flex-direction:column;gap:5px}
+    .field label,.label{font-size:13px;font-weight:600}.wide{grid-column:1/-1}
+    input,select{padding:10px 11px;border:1px solid var(--border);border-radius:8px;background:var(--card);color:var(--text);font:inherit;width:100%}
+    input:focus{outline:2px solid var(--soft);border-color:var(--accent)}.seats{display:flex;gap:8px 19px;flex-wrap:wrap;padding:8px 0}
+    .seats label{display:inline-flex;align-items:center;gap:5px;font-weight:400;font-size:14px}.seats input{width:auto}
+    .form-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:20px}.hide{display:none}
+    .message{min-height:22px;color:var(--warn);font-size:13px;margin-top:8px}
+    @media(max-width:600px){.form-grid{grid-template-columns:1fr}.task-actions{width:100%;justify-content:flex-start}.top{align-items:flex-start}}
+  </style>
+</head>
+<body>
+<main>
+  <header class="top">
+    <div>
+      <p class="muted"><a href="/">← 原有控制台</a></p>
+      <h1>余票监控 · 任务管理</h1>
+      <p class="muted">在浏览器中管理查询条件，保存后立即生效。</p>
+    </div>
+    <div class="actions"><button id="refresh" type="button">刷新</button><button class="primary" id="add" type="button">＋ 新增任务</button></div>
+  </header>
+  <p class="note">仅提供余票监控，不提交订单；所有新建或修改的任务均设为 monitor_only。页面仅限本机使用。</p>
+  <section id="tasks"><div class="card empty">正在加载任务…</div></section>
+  <section id="editor" class="card hide" aria-labelledby="editor-title">
+    <h2 id="editor-title">新增任务</h2>
+    <form id="task-form">
+      <div class="form-grid">
+        <div class="field wide"><label for="job_name">任务名称</label><input id="job_name" maxlength="60" placeholder="例如：周末返程" autocomplete="off"></div>
+        <div class="field"><label for="left">出发站</label><input id="left" list="left-options" required placeholder="北京南" autocomplete="off"><datalist id="left-options"></datalist></div>
+        <div class="field"><label for="arrive">到达站</label><input id="arrive" list="arrive-options" required placeholder="上海虹桥" autocomplete="off"><datalist id="arrive-options"></datalist></div>
+        <div class="field"><label for="date">乘车日期</label><input type="date" id="date" required></div>
+        <div class="field"><label>出发时间</label><div class="actions" style="flex-wrap:nowrap"><input id="from_time" type="time" value="00:00" required aria-label="开始时间"><span>至</span><select id="to_time" aria-label="结束时间"><option value="24:00">24:00</option></select></div></div>
+        <div class="field wide"><span class="label">席别（可多选）</span><div class="seats" id="seat-options"></div></div>
+        <div class="field"><label for="train_numbers">指定车次（可留空）</label><input id="train_numbers" placeholder="G1,G3" autocomplete="off"></div>
+        <div class="field"><label for="except_train_numbers">排除车次（可留空）</label><input id="except_train_numbers" placeholder="G8,G12" autocomplete="off"></div>
+      </div>
+      <div id="error" class="message" role="alert"></div>
+      <div class="form-actions"><button id="cancel" type="button">取消</button><button id="save" class="primary" type="submit">保存任务</button></div>
+    </form>
+  </section>
+  <p class="muted" style="margin-top:18px;font-size:12px">任务配置保存在本地 env.py 的 QUERY_JOBS 中。网页登录使用 env.py 的 WEB_USER。</p>
+</main>
+<script>
+(() => {
+  'use strict';
+  const $ = id => document.getElementById(id);
+  const seatNames = ['二等座','一等座','商务座','特等座','软卧','硬卧','动卧','软座','硬座','无座'];
+  let items = [], editing = null, canEdit = true, busy = false;
+  const today = new Date();
+  // Local calendar day, not UTC (toISOString might shift the date).
+  const isoDate = dt => [dt.getFullYear(),String(dt.getMonth()+1).padStart(2,'0'),String(dt.getDate()).padStart(2,'0')].join('-');
+  $('date').min = isoDate(today);
+  const maxDate = new Date(today.getFullYear(), today.getMonth(), today.getDate()+32);
+  $('date').max = isoDate(maxDate);
+  const toTime = $('to_time');
+  for(let hour=0;hour<24;hour++) for(let min of [0,30]) {
+    const t=String(hour).padStart(2,'0')+':'+String(min).padStart(2,'0');
+    const el=document.createElement('option');el.value=t;el.textContent=t;toTime.insertBefore(el,toTime.lastElementChild);
+  }
+  toTime.value='24:00';
+  seatNames.forEach(name => {
+    const label=document.createElement('label');
+    const checkbox=document.createElement('input'); checkbox.type='checkbox'; checkbox.value=name;checkbox.name='seat';
+    if(name==='二等座') checkbox.checked=true;
+    label.append(checkbox,document.createTextNode(name));$('seat-options').append(label);
+  });
+  async function api(url, method='GET', body) {
+    const options={method,cache:'no-store',credentials:'same-origin',headers:{}};
+    if(body!==undefined){options.headers['Content-Type']='application/json';options.headers['X-Py12306-Manage']='1';options.body=JSON.stringify(body);}
+    const res=await fetch(url,options);
+    const data=await res.json().catch(()=>({}));
+    if(!res.ok)throw new Error(data.error||`HTTP ${res.status}`);
+    return data;
+  }
+  function addText(parent,tag,value,className){const el=document.createElement(tag);el.textContent=value;if(className)el.className=className;parent.append(el);return el;}
+  function actionButton(text,handler,cls='') {
+    const button=document.createElement('button');button.type='button';button.textContent=text;button.className='small '+cls;button.disabled=!canEdit || busy;button.addEventListener('click',handler);return button;
+  }
+  function render() {
+    const root=$('tasks');root.replaceChildren();$('add').disabled=!canEdit || busy;
+    if(!items.length){addText(root,'div','没有查询任务。点击“新增任务”开始配置。','card empty');return;}
+    for(const task of items){
+      const card=document.createElement('article');card.className='card task';
+      const body=document.createElement('div');body.className='task-body';
+      const h=addText(body,'h3',task.job_name+' ','');
+      addText(h,'span',task.enabled?'运行中':'已暂停','pill '+(task.enabled?'on':'off'));
+      addText(body,'div',`${task.left} → ${task.arrive} · ${task.date} · ${(task.seats||[]).join(' / ')}`,'meta');
+      addText(body,'div',`${task.from_time}—${task.to_time}  ·  ${task.train_numbers?'指定：'+task.train_numbers:'全部车次'}${task.except_train_numbers?' · 排除：'+task.except_train_numbers:''}`,'meta');
+      if(!task.monitor_only)addText(body,'div','旧任务：尚未标记 monitor_only，编辑或切换状态后将转换为纯监控任务','meta');
+      const actions=document.createElement('div');actions.className='task-actions';
+      actions.append(actionButton('编辑',()=>openEditor(task)), actionButton(task.enabled?'暂停':'启动',()=>toggle(task)));
+      actions.append(actionButton('删除',()=>remove(task),'danger'));
+      card.append(body,actions);root.append(card);
+    }
+  }
+  async function refresh(){
+    try{const data=await api('/manage/api/tasks');items=data.tasks;canEdit=data.can_edit;render();
+      if(!canEdit){$('editor').classList.add('hide');addText($('tasks'),'p','检测到 USER_ACCOUNTS 非空：网页编辑已被禁用。请先切换为纯监控模式。','note');}
+    } catch(e){$('tasks').replaceChildren();addText($('tasks'),'div','加载失败：'+e.message,'card empty');}
+  }
+  function openEditor(task=null){
+    editing=task?task.index:null; $('editor-title').textContent=task?'编辑任务':'新增任务';
+    $('job_name').value=task?task.job_name:'';
+    $('left').value=task?task.left:'';
+    $('arrive').value=task?task.arrive:'';
+    $('date').value=task?task.date:isoDate(today);
+    $('from_time').value=task?task.from_time:'00:00';
+    $('to_time').value=task?task.to_time:'24:00';
+    $('train_numbers').value=task?task.train_numbers:'';
+    $('except_train_numbers').value=task?task.except_train_numbers:'';
+    document.querySelectorAll('input[name="seat"]').forEach(box=>box.checked=task?task.seats.includes(box.value):box.value==='二等座');
+    $('error').textContent='';$('editor').classList.remove('hide');$('editor').scrollIntoView({behavior:'smooth',block:'start'});
+  }
+  function payload(){return {
+    job_name:$('job_name').value,left:$('left').value,arrive:$('arrive').value,date:$('date').value,
+    from_time:$('from_time').value,to_time:$('to_time').value,
+    train_numbers:$('train_numbers').value,except_train_numbers:$('except_train_numbers').value,
+    seats:[...document.querySelectorAll('input[name="seat"]:checked')].map(e=>e.value),enabled: editing===null?true:items[editing].enabled
+  };}
+  async function operation(url,method,body){busy=true;render();try{await api(url,method,body);$('editor').classList.add('hide');await refresh();}catch(e){$('error').textContent=e.message;alert('操作失败：'+e.message);}finally{busy=false;render();}}
+  async function toggle(task){await operation('/manage/api/tasks/'+task.index+'/enabled','PATCH',{enabled:!task.enabled});}
+  async function remove(task){if(confirm(`确认删除任务“${task.job_name}”？`))await operation('/manage/api/tasks/'+task.index,'DELETE',{});}
+  $('task-form').addEventListener('submit',async ev=>{ev.preventDefault();
+    const url=editing===null?'/manage/api/tasks':'/manage/api/tasks/'+editing;
+    await operation(url,editing===null?'POST':'PUT',payload());
+  });
+  $('add').addEventListener('click',()=>openEditor());$('cancel').addEventListener('click',()=>$('editor').classList.add('hide'));
+  $('refresh').addEventListener('click',refresh);
+  const suggestions=(id,target)=>{
+    let timer;$(id).addEventListener('input',()=>{clearTimeout(timer);const q=$(id).value.trim();if(!q){$(target).replaceChildren();return;}
+      timer=setTimeout(async()=>{try{const data=await api('/manage/api/stations?q='+encodeURIComponent(q));const list=$(target);list.replaceChildren();
+        data.stations.forEach(name=>{const item=document.createElement('option');item.value=name;list.append(item);});}catch(e){}},220);
+    });
+  };
+  suggestions('left','left-options');suggestions('arrive','arrive-options');refresh();
+})();
+</script>
+</body>
+</html>
