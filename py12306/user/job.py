@@ -160,7 +160,6 @@ class UserJob:
         return False
 
     def qr_login(self):
-        self.request_device_id()
         image_uuid, png_path = self.download_code()
         last_time = time_int()
         while True:
@@ -200,11 +199,11 @@ class UserJob:
         except Exception as e:
             UserLog.add_quick_log('无法删除文件: {}'.format(e)).flush()
 
-        self.session.get(API_USER_LOGIN, allow_redirects=True)
+        self.session.get(API_USER_LOGIN['url'], allow_redirects=True)
         new_tk = self.auth_uamtk()
         user_name = self.auth_uamauthclient(new_tk)
         self.update_user_info({'user_name': user_name})
-        self.session.get(API_USER_LOGIN, allow_redirects=True)
+        self.session.get(API_USER_LOGIN['url'], allow_redirects=True)
         self.login_did_success()
         return True
 
@@ -268,18 +267,12 @@ class UserJob:
                 else:
                     print_qrcode(png_path)
                 UserLog.add_log(UserLog.MESSAGE_QRCODE_DOWNLOADED.format(png_path)).flush()
-                Notification.send_email_with_qrcode(Config().EMAIL_RECEIVER, '你有新的登录二维码啦!', png_path)
+                # Notification.send_email_with_qrcode(Config().EMAIL_RECEIVER, '你有新的登录二维码啦!', png_path)
                 self.retry_count = 0
                 return result.get('uuid'), png_path
             raise KeyError('获取二维码失败: {}'.format(result.get('result_message')))
         except Exception as e:
-            sleep_time = get_interval_num(self.sleep_interval)
-            UserLog.add_quick_log(
-                UserLog.MESSAGE_QRCODE_FAIL.format(e, sleep_time)).flush()
-            time.sleep(sleep_time)
-            self.request_device_id(self.retry_count % 20 == 0)
-            self.retry_count += 1
-            return self.download_code()
+            raise RuntimeError(f"二维码获取失败: {e}") from e
 
     def check_user_is_login(self):
         retry = 0

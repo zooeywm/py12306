@@ -30,7 +30,7 @@ class Query:
 
     def __init__(self):
         self.session = Request()
-        self.request_device_id()
+        # self.request_device_id()
         self.cluster = Cluster()
         self.update_query_interval()
         self.update_query_jobs()
@@ -150,7 +150,9 @@ class Query:
             except Exception:
                 return self.request_device_id()
         else:
-            return self.request_device_id()
+            raise ConnectionError(
+                f"获取设备 ID 失败: HTTP {response.status_code}"
+            )
 
     def request_device_id2(self):
         headers = {
@@ -218,7 +220,7 @@ class Query:
         if not self.api_type:
             QueryLog.add_quick_log('查询地址获取失败, 正在重新获取...').flush()
             sleep(get_interval_num(self.interval))
-        self.request_device_id(True)
+        # self.request_device_id(True)
         return cls.get_query_api_type()
 
 # def get_jobs_from_cluster(self):

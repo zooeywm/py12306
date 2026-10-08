@@ -23,7 +23,8 @@ def main():
     Web.run()
     Cdn.run()
     User.run()
-    Query.run()
+    if Config().QUERY_JOBS:
+        Query.run()
     if not Const.IS_TEST:
         while True:
             sleep(10000)

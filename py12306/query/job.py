@@ -215,7 +215,8 @@ class Job:
                     QueryLog.add_quick_log(
                         QueryLog.MESSAGE_GIVE_UP_CHANCE_CAUSE_TICKET_NUM_LESS_THAN_SPECIFIED).flush()
                     continue
-            if Const.IS_TEST: return
+            if Const.IS_TEST or User.is_empty():
+                return
             # 检查完成 开始提交订单
             QueryLog.print_ticket_available(left_date=self.get_info_of_left_date(),
                                             train_number=self.get_info_of_train_number(),
