@@ -1,5 +1,6 @@
 from datetime import timedelta
 from datetime import datetime
+from py12306.query.seat_monitor import SeatMonitor
 
 from py12306.app import app_available_check
 from py12306.cluster.cluster import Cluster
@@ -71,6 +72,7 @@ class Job:
     def __init__(self, info, query):
         self.cluster = Cluster()
         self.query = query
+        self.seat_monitor = SeatMonitor()
         self.init_data(info)
         self.update_interval()
 
@@ -186,6 +188,9 @@ class Job:
         results = self.get_results(response)
         if not results:
             return False
+        if User.is_empty():
+            self.seat_monitor.update(self, results)
+            return
         for result in results:
             self.ticket_info = ticket_info = result.split('|')
             if not self.is_trains_number_valid():  # 车次是否有效
