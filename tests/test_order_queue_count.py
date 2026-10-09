@@ -68,6 +68,28 @@ class QueueSupplyTests(unittest.TestCase):
     def test_queue_missing_ticket(self):
         self.check({'status': True, 'data': {'countT': 0}}, False)
 
+    def test_queue_missing_ticket_diagnostic_is_redacted(self):
+        order = self.make_order(FakeResponse({'status': True, 'data': {
+            'countT': '1', 'op_2': 'false',
+            'REPEAT_SUBMIT_TOKEN': 'SECRET_DO_NOT_LOG',
+            'passenger': 'PRIVATE_DO_NOT_LOG'
+        }}))
+        with patch('py12306.order.order.OrderLog.add_quick_log'):
+            self.assertFalse(order.get_queue_count())
+        self.assertIn('countT', order.failure_reason)
+        self.assertIn('op_2', order.failure_reason)
+        self.assertNotIn('SECRET_DO_NOT_LOG', order.failure_reason)
+        self.assertNotIn('PRIVATE_DO_NOT_LOG', order.failure_reason)
+
+    def test_queue_numeric_ticket(self):
+        self.check({'status': True, 'data': {'ticket': 8, 'countT': 0}}, True)
+
+    def test_queue_full_queue_without_ticket(self):
+        order = self.make_order(FakeResponse({'status': True, 'data': {'op_2': 'true'}}))
+        with patch('py12306.order.order.OrderLog.add_quick_log'):
+            self.assertFalse(order.get_queue_count())
+        self.assertIn('排队人数超过余票数量', order.failure_reason)
+
     def test_queue_invalid_ticket(self):
         self.check({'status': True, 'data': {'ticket': '*'}}, False)
 

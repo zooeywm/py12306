@@ -424,9 +424,19 @@ class Order:
         payload = result.get('data')
         if not isinstance(payload, dict):
             return fail('12306 排队接口未返回有效 data 对象')
+        # Do not infer availability from a response without a verified ticket count.
+        # Log response *shape*, not raw JSON/values (which can contain secrets).
+        if payload.get('op_2') in (True, 'true', 'True'):
+            return fail('排队人数超过余票数量')
         ticket_raw = payload.get('ticket')
+        if isinstance(ticket_raw, int) and not isinstance(ticket_raw, bool):
+            ticket_raw = str(ticket_raw)
         if not isinstance(ticket_raw, str) or not ticket_raw.strip():
-            return fail('12306 排队接口未返回 ticket 余票字段')
+            safe_field_names = ('ticket', 'count', 'countT', 'op_1', 'op_2',
+                                'errMsg', 'errorCode', 'submitStatus')
+            present = ', '.join(name for name in safe_field_names if name in payload) or '无'
+            return fail('12306 排队接口未返回有效 ticket 余票字段'
+                        '（data 字段数：{}；可识别字段：{}）'.format(len(payload), present))
         tickets = [part.strip() for part in ticket_raw.split(',')]
         ticket_number = tickets[0]
         if ticket_number not in ('有', '充足'):
