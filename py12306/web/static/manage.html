@@ -525,6 +525,159 @@
     if($('task-dialog').open)$('task-dialog').close();
     editing=null;
   }
+  // All station options are loaded once from the project's cached 12306 station list.
+  async function loadStations(){
+    try{
+      const data=await api('/manage/api/stations/all');
+      if(!Array.isArray(data.stations))throw new Error('车站数据无效');
+      stations=data.stations.filter(item=>item&&typeof item.name==='string'&&item.name);
+      for(const entry of stations)stationNames.add(entry.name);
+      stationLoadError='';
+    }catch(error){
+      stationLoadError='车站列表加载失败：'+error.message;
+    }
+    for(const id of ['left','arrive']){
+      if(!$(id+'-options').hidden)renderStationOptions(id);
+    }
+  }
+  const closeStationOptions=()=>{
+    for(const id of ['left','arrive']){
+      $(id+'-options').hidden=true;
+      $(id).setAttribute('aria-expanded','false');
+    }
+  };
+  const stationMatches=id=>{
+    const query=$(id).value.trim().toLowerCase();
+    return stations.filter(item=>!query||item.name.toLowerCase().includes(query)||
+      String(item.pinyin||'').toLowerCase().includes(query));
+  };
+  let stationActiveIndex={left:-1,arrive:-1};
+  function chooseStation(id,name){
+    const previous=$(id).value;
+    $(id).value=name;
+    closeStationOptions();
+    if(previous!==name){selectedTrains={include:[],exclude:[]};refreshTrainPickers();}
+    $(id).focus();
+  }
+  function renderStationOptions(id){
+    const root=$(id+'-options');
+    root.replaceChildren();
+    const matches=stationMatches(id);
+    const maxOptions=160;
+    stationActiveIndex[id]=-1;
+    for(const entry of matches.slice(0,maxOptions)){
+      const button=document.createElement('button');
+      button.type='button';button.className='station-option';
+      button.setAttribute('role','option');
+      button.setAttribute('aria-selected','false');
+      button.append(document.createTextNode(entry.name));
+      if(entry.pinyin)addText(button,'small',entry.pinyin);
+      button.addEventListener('pointerdown',event=>event.preventDefault());
+      button.addEventListener('click',()=>chooseStation(id,entry.name));
+      root.append(button);
+    }
+    if(!stations.length)addText(root,'div',stationLoadError||'正在加载全部 12306 车站…','station-hint');
+    else if(!matches.length)addText(root,'div','没有匹配的车站，请修改关键词','station-hint');
+    else if(matches.length>maxOptions)
+      addText(root,'div',`找到 ${matches.length} 个车站，先显示前 ${maxOptions} 个；继续输入可以缩小范围`,'station-hint');
+    root.hidden=false;
+    $(id).setAttribute('aria-expanded','true');
+  }
+  const stationInput=id=>{
+    const input=$(id),list=$(id+'-options');
+    input.addEventListener('focus',()=>{closeStationOptions();renderStationOptions(id);});
+    input.addEventListener('click',()=>{closeStationOptions();renderStationOptions(id);});
+    input.addEventListener('input',()=>renderStationOptions(id));
+    input.addEventListener('keydown',event=>{
+      if(event.key==='Escape'){
+        closeStationOptions();return;
+      }
+      if(event.key==='ArrowDown'||event.key==='ArrowUp'){
+        event.preventDefault();
+        if(list.hidden)renderStationOptions(id);
+        const buttons=[...list.querySelectorAll('button.station-option')];
+        if(!buttons.length)return;
+        stationActiveIndex[id]=(stationActiveIndex[id]+(event.key==='ArrowDown'?1:-1)+buttons.length)%buttons.length;
+        buttons.forEach((button,index)=>button.setAttribute('aria-selected',String(index===stationActiveIndex[id])));
+        buttons[stationActiveIndex[id]].scrollIntoView({block:'nearest'});
+      }
+      if(event.key==='Enter'&&!list.hidden&&stationActiveIndex[id]>=0){
+        const buttons=[...list.querySelectorAll('button.station-option')];
+        const choice=buttons[stationActiveIndex[id]];
+        if(choice){event.preventDefault();choice.click();}
+      }
+    });
+  };
+  stationInput('left');stationInput('arrive');
+  document.addEventListener('pointerdown',event=>{
+    if(!event.target.closest('.station-combo'))closeStationOptions();
+  });
+
+  function trainCandidates(){
+    const origin=$('left').value.trim(),destination=$('arrive').value.trim(),date=$('date').value;
+    const map=new Map();
+    for(const group of availabilityCache){
+      for(const route of group.routes||[]){
+        if(route.left!==origin||route.arrive!==destination||route.date!==date)continue;
+        const options=route.train_options||route.rows||[];
+        for(const item of options){
+          const name=String(item.train||'').toUpperCase();
+          if(/^[A-Z0-9]{1,8}$/.test(name))
+            map.set(name,{train:name,departure:item.departure||'',arrival:item.arrival||''});
+        }
+      }
+    }
+    return map;
+  }
+  function updateTrainPicker(mode,candidates){
+    const current=selectedTrains[mode],other=selectedTrains[mode==='include'?'exclude':'include'];
+    const label=$(mode+'-trains-summary');
+    const heading=mode==='include'?'指定':'排除';
+    label.textContent=current.length?`${heading} ${current.length} 趟 · ${current.join('、')}`:(mode==='include'?'全部车次（未指定）':'不排除任何车次');
+    const root=$(mode+'-trains-options');
+    root.replaceChildren();
+    const search=$(mode+'-trains-search').value.trim().toUpperCase();
+    const names=new Set([...candidates.keys(),...current]);
+    const matched=[...names].sort((a,b)=>a.localeCompare(b,'zh-CN',{numeric:true})).filter(name=>name.includes(search));
+    if(other.length)addText(root,'p','指定与排除不可同时设置：请先清空另一侧的车次','train-empty');
+    if(!matched.length)
+      addText(root,'p',candidates.size?'没有符合搜索条件的车次':'该线路及日期暂无查询到的车次，请先保存任务并等待余票刷新','train-empty');
+    for(const name of matched){
+      const info=candidates.get(name),checked=current.includes(name);
+      const option=document.createElement('label');
+      const checkbox=document.createElement('input');
+      checkbox.type='checkbox';checkbox.value=name;checkbox.checked=checked;
+      checkbox.disabled=!!other.length&&!checked;
+      checkbox.addEventListener('change',()=>{
+        if(checkbox.checked){
+          if(!selectedTrains[mode].includes(name)){
+            if(selectedTrains[mode].length>=30){
+              $('error').textContent='单侧最多可选择 30 趟车次';
+              checkbox.checked=false;return;
+            }
+            selectedTrains[mode].push(name);
+          }
+        }else selectedTrains[mode]=selectedTrains[mode].filter(train=>train!==name);
+        refreshTrainPickers();
+      });
+      option.append(checkbox,document.createTextNode(name+
+        (info?` · ${info.departure} → ${info.arrival}`:' · 已选择，当前查询未返回')));
+      root.append(option);
+    }
+  }
+  function refreshTrainPickers(){
+    const candidates=trainCandidates();
+    for(const mode of trainModes)updateTrainPicker(mode,candidates);
+  }
+  for(const mode of trainModes){
+    $(mode+'-trains-search').addEventListener('input',refreshTrainPickers);
+    $(mode+'-trains').addEventListener('toggle',()=>refreshTrainPickers());
+  }
+  $('date').addEventListener('change',()=>{
+    selectedTrains={include:[],exclude:[]};refreshTrainPickers();
+  });
+  loadStations();
+
   function openEditor(task=null){
     closeEditor();
     editing=task?task.index:null;
