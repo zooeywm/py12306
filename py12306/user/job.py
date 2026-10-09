@@ -63,6 +63,10 @@ class UserJob:
         self.session = Request()
         self.session.add_response_hook(self.response_login_check)
         self.key = str(info.get('key'))
+        self.passengers = []  # Do not share a contact list between accounts.
+        self._web_contacts_lock = threading.Lock()
+        self._web_contacts_inflight = False
+        self._web_contacts_last_attempt = 0.0
         self.user_name = info.get('user_name')
         self.password = info.get('password')
         self.type = info.get('type')
@@ -121,6 +125,40 @@ class UserJob:
         if Config().is_cluster_enabled():
             return not self.cluster.get_user_cookie(self.key)
         return not path.exists(self.get_cookie_path())
+
+    def ensure_web_contacts(self):
+        """Load contacts after login without blocking Flask polling requests.
+
+        Retries are throttled; QR login and restored cookies use the same session.
+        """
+        if not self.is_ready or self.passengers:
+            return
+        with self._web_contacts_lock:
+            if (self._web_contacts_inflight or
+                    time.monotonic() - self._web_contacts_last_attempt < 30):
+                return
+            self._web_contacts_inflight = True
+            self._web_contacts_last_attempt = time.monotonic()
+
+        def fetch_contacts():
+            try:
+                response = self.session.post(API_USER_PASSENGERS, timeout=8)
+                payload = response.json()
+                passengers = payload.get('data.normal_passengers')
+                if isinstance(passengers, list):
+                    self.passengers = passengers
+            except (OSError, ValueError, TypeError, AttributeError):
+                pass
+            finally:
+                with self._web_contacts_lock:
+                    self._web_contacts_inflight = False
+
+        try:
+            threading.Thread(target=fetch_contacts, daemon=True,
+                             name='py12306-web-contacts').start()
+        except RuntimeError:
+            with self._web_contacts_lock:
+                self._web_contacts_inflight = False
 
     def get_web_qr_status(self):
         """Expose only QR metadata; the image itself uses an authenticated endpoint."""
