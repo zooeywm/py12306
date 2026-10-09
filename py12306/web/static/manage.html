@@ -184,6 +184,7 @@
   let items = [], editing = null, canEdit = true, busy = false;
   const expandedTasks = new Set();
   const availabilityPanels = new Map();
+  const taskFilters = new Map(); // keyed by task name; controls remain independent
   const today = new Date();
   // Local calendar day, not UTC (toISOString might shift the date).
   const isoDate = dt => [dt.getFullYear(),String(dt.getMonth()+1).padStart(2,'0'),String(dt.getDate()).padStart(2,'0')].join('-');
@@ -281,10 +282,16 @@
       if(editing===task.index && !editor.classList.contains('hide'))card.append(editor);
 
       const details=document.createElement('details');details.className='task-availability';
+      details.dataset.taskName=task.job_name;
+      details.dataset.taskIndex=String(task.index);
       details.open=expandedTasks.has(task.job_name);
       const title=document.createElement('summary');title.textContent='实时余票 · 等待更新';
+      const filterRoot=document.createElement('div');
+      filterRoot.className='task-filter-host';
+      filterRoot.append($('task-filter-template').content.cloneNode(true));
       const panel=document.createElement('div');panel.className='task-availability-content';
-      details.append(title,panel);
+      details.append(title,filterRoot,panel);
+      attachTaskFilters(task,details,filterRoot);
       availabilityPanels.set(task.index,{task,details,title,panel});
       details.addEventListener('toggle',()=>{
         if(!details.isConnected)return;
@@ -321,13 +328,47 @@
   }
   // These controls live outside availability-data and are never recreated by
   // polling, so typing a filter cannot lose focus every five seconds.
-  const filterIds=['filter-depart-from','filter-depart-to','filter-duration-min','filter-duration-max',
-    'filter-seat','filter-price-min','filter-price-max','filter-quantity-state','filter-quantity-min'];
+  const filterIds=['depart-from','depart-to','duration-min','duration-max','seat',
+    'price-min','price-max','quantity-state'];
   const defaultSort={key:'departure',direction:'asc'};
-  let sortKey=defaultSort.key,sortDirection=defaultSort.direction;
   let availabilityCache=[];
-  seatNames.forEach(name=>{const option=document.createElement('option');option.value=name;option.textContent=name;$('filter-seat').append(option);});
-
+  const filterInput=(root,id)=>root.querySelector('[data-filter="'+id+'"]');
+  function getTaskFilter(name){
+    if(!taskFilters.has(name))taskFilters.set(name,{
+      values:Object.fromEntries(filterIds.map(id=>[id,''])),
+      sortKey:defaultSort.key,sortDirection:defaultSort.direction
+    });
+    return taskFilters.get(name);
+  }
+  function attachTaskFilters(task,details,root){
+    const state=getTaskFilter(task.job_name);
+    const seatInput=filterInput(root,'seat');
+    for(const name of seatNames){
+      const option=document.createElement('option');option.value=name;
+      option.textContent=name;seatInput.append(option);
+    }
+    for(const id of filterIds){
+      const input=filterInput(root,id);
+      input.value=state.values[id];
+      for(const event of ['input','change'])input.addEventListener(event,()=>{
+        state.values[id]=input.value;
+        if(id==='quantity-state')filterInput(root,'only-available').checked=input.value==='available';
+        renderTaskAvailability(task,details,details.querySelector('summary'),details.querySelector('.task-availability-content'));
+      });
+    }
+    filterInput(root,'only-available').checked=state.values['quantity-state']==='available';
+    filterInput(root,'only-available').addEventListener('change',event=>{
+      state.values['quantity-state']=event.target.checked?'available':'';
+      filterInput(root,'quantity-state').value=state.values['quantity-state'];
+      renderTaskAvailability(task,details,details.querySelector('summary'),details.querySelector('.task-availability-content'));
+    });
+    root.querySelector('[data-filter-action="clear"]').addEventListener('click',()=>{
+      for(const id of filterIds){state.values[id]='';filterInput(root,id).value='';}
+      filterInput(root,'only-available').checked=false;
+      state.sortKey=defaultSort.key;state.sortDirection=defaultSort.direction;
+      renderTaskAvailability(task,details,details.querySelector('summary'),details.querySelector('.task-availability-content'));
+    });
+  }
   function durationMinutes(value){
     const m=/^(\d+)小时(\d{1,2})分$/.exec(String(value||''));
     if(!m||Number(m[2])>=60)return null;
