@@ -434,12 +434,25 @@
   async function refreshAvailability(){
     if(availabilityFetching)return;
     availabilityFetching=true;
-    try{const data=await api('/manage/api/availability');renderAvailability(data.groups||[]);}
-    catch(e){$('availability-data').replaceChildren();addText($('availability-data'),'p','获取余票失败：'+e.message,'muted');}
-    finally{availabilityFetching=false;}
+    try{
+      const data=await api('/manage/api/availability');
+      $('availability-status').textContent='从本地缓存更新，筛选与排序适用于所有任务。';
+      renderAvailability(data.groups||[]);
+    }catch(e){
+      $('availability-status').textContent='获取余票失败：'+e.message;
+    }finally{availabilityFetching=false;}
+  }
+  function closeEditor(){
+    const editor=$('editor');
+    editor.classList.add('hide');
+    $('editor-parking').append(editor);
+    if($('task-dialog').open)$('task-dialog').close();
+    editing=null;
   }
   function openEditor(task=null){
-    editing=task?task.index:null; $('editor-title').textContent=task?'编辑任务':'新增任务';
+    closeEditor();
+    editing=task?task.index:null;
+    $('editor-title').textContent=task?'修改任务 · '+task.job_name:'新增任务';
     $('job_name').value=task?task.job_name:'';
     $('left').value=task?task.left:'';
     $('arrive').value=task?task.arrive:'';
@@ -449,22 +462,52 @@
     $('train_numbers').value=task?task.train_numbers:'';
     $('except_train_numbers').value=task?task.except_train_numbers:'';
     document.querySelectorAll('input[name="seat"]').forEach(box=>box.checked=task?task.seats.includes(box.value):box.value==='二等座');
-    $('error').textContent='';$('editor').classList.remove('hide');$('editor').scrollIntoView({behavior:'smooth',block:'start'});
+    $('error').textContent='';
+    $('editor').classList.remove('hide');
+    if(task){
+      render();
+      $('editor').scrollIntoView({behavior:'smooth',block:'nearest'});
+    }else{
+      $('add-editor-host').append($('editor'));
+      $('task-dialog').showModal();
+      $('job_name').focus();
+    }
   }
   function payload(){return {
     job_name:$('job_name').value,left:$('left').value,arrive:$('arrive').value,date:$('date').value,
     from_time:$('from_time').value,to_time:$('to_time').value,
     train_numbers:$('train_numbers').value,except_train_numbers:$('except_train_numbers').value,
-    seats:[...document.querySelectorAll('input[name="seat"]:checked')].map(e=>e.value),enabled: editing===null?true:items[editing].enabled
+    seats:[...document.querySelectorAll('input[name="seat"]:checked')].map(e=>e.value),
+    enabled:editing===null?true:items[editing].enabled
   };}
-  async function operation(url,method,body){busy=true;render();try{await api(url,method,body);$('editor').classList.add('hide');await refresh();await refreshAvailability();}catch(e){$('error').textContent=e.message;alert('操作失败：'+e.message);}finally{busy=false;render();}}
+  async function operation(url,method,body){
+    busy=true;render();
+    try{
+      await api(url,method,body);
+      if(editing!==null&&method==='PUT'&&body.job_name!==items[editing]?.job_name){
+        const oldName=items[editing]?.job_name;
+        if(expandedTasks.delete(oldName))expandedTasks.add(body.job_name);
+      }
+      closeEditor();
+      await refresh();
+      await refreshAvailability();
+    }catch(e){
+      $('error').textContent=e.message;
+      alert('操作失败：'+e.message);
+    }finally{busy=false;render();}
+  }
   async function toggle(task){await operation('/manage/api/tasks/'+task.index+'/enabled','PATCH',{enabled:!task.enabled});}
   async function remove(task){if(confirm(`确认删除任务“${task.job_name}”？`))await operation('/manage/api/tasks/'+task.index,'DELETE',{});}
-  $('task-form').addEventListener('submit',async ev=>{ev.preventDefault();
+  $('task-form').addEventListener('submit',async ev=>{
+    ev.preventDefault();
     const url=editing===null?'/manage/api/tasks':'/manage/api/tasks/'+editing;
     await operation(url,editing===null?'POST':'PUT',payload());
   });
-  $('add').addEventListener('click',()=>openEditor());$('cancel').addEventListener('click',()=>$('editor').classList.add('hide'));
+  $('add').addEventListener('click',()=>openEditor());
+  $('cancel').addEventListener('click',()=>{closeEditor();render();});
+  $('task-dialog').addEventListener('close',()=>{
+    if(editing===null){$('editor').classList.add('hide');$('editor-parking').append($('editor'));}
+  });
   $('refresh').addEventListener('click',()=>{refresh();refreshAvailability();});
   $('availability-refresh').addEventListener('click',refreshAvailability);
   const suggestions=(id,target)=>{
