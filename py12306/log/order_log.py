@@ -12,7 +12,7 @@ class OrderLog(BaseLog):
     MESSAGE_REQUEST_INIT_DC_PAGE_FAIL = '请求初始化订单页面失败'
 
     MESSAGE_SUBMIT_ORDER_REQUEST_FAIL = '提交订单失败，错误原因 {} \n'
-    MESSAGE_SUBMIT_ORDER_REQUEST_SUCCESS = '提交订单成功'
+    MESSAGE_SUBMIT_ORDER_REQUEST_SUCCESS = '12306 已接受初始下单请求，尚未生成订单'
     MESSAGE_CHECK_ORDER_INFO_FAIL = '检查订单失败，错误原因 {} \n'
     MESSAGE_CHECK_ORDER_INFO_SUCCESS = '检查订单成功'
 
@@ -22,7 +22,7 @@ class OrderLog(BaseLog):
     MESSAGE_GET_QUEUE_LESS_TICKET = '排队失败，目前排队人数已经超过余票张数'
     MESSAGE_GET_QUEUE_COUNT_FAIL = '排队失败，错误原因 {}'
 
-    MESSAGE_CONFIRM_SINGLE_FOR_QUEUE_SUCCESS = '# 提交订单成功！#'
+    MESSAGE_CONFIRM_SINGLE_FOR_QUEUE_SUCCESS = '排队确认已提交，正在等待 12306 返回订单号'
     MESSAGE_CONFIRM_SINGLE_FOR_QUEUE_ERROR = '出票失败，错误原因 {}'
     MESSAGE_CONFIRM_SINGLE_FOR_QUEUE_FAIL = '提交订单失败，错误原因 {}'
 
