@@ -382,76 +382,83 @@ class Order:
         return False
 
     def get_queue_count(self):
+        """Check queue supply; malformed 12306 replies must not fail silently.
+
+        Never log the response body: it may contain passenger or order data.
         """
-        获取队列人数
-        train_date	Mon Jan 01 2019 00:00:00 GMT+0800 (China Standard Time)
-        train_no	630000Z12208
-        stationTrainCode	Z122
-        seatType	4
-        fromStationTelecode	GZQ
-        toStationTelecode	RXW
-        leftTicket	CmDJZYrwUoJ1jFNonIgPzPFdMBvSSE8xfdUwvb2lq8CCWn%2Bzk1vM3roJaHk%3D
-        purpose_codes	00
-        train_location	QY
-        _json_att
-        REPEAT_SUBMIT_TOKEN	0977caf26f25d1da43e3213eb35ff87c
-        :return:
-        """
-        data = {  #
-            'train_date': '{} 00:00:00 GMT+0800 (China Standard Time)'.format(
-                datetime.datetime.strptime(self.query_ins.left_date, '%Y-%m-%d').strftime("%a %h %d %Y")),
-            'train_no': self.user_ins.ticket_info_for_passenger_form['queryLeftTicketRequestDTO']['train_no'],
-            'stationTrainCode': self.user_ins.ticket_info_for_passenger_form['queryLeftTicketRequestDTO'][
-                'station_train_code'],
-            'seatType': self.query_ins.current_order_seat,
-            'fromStationTelecode': self.user_ins.ticket_info_for_passenger_form['queryLeftTicketRequestDTO'][
-                'from_station'],
-            'toStationTelecode': self.user_ins.ticket_info_for_passenger_form['queryLeftTicketRequestDTO'][
-                'to_station'],
-            'leftTicket': self.user_ins.ticket_info_for_passenger_form['leftTicketStr'],
-            'purpose_codes': self.user_ins.ticket_info_for_passenger_form['purpose_codes'],
-            'train_location': self.user_ins.ticket_info_for_passenger_form['train_location'],
-            '_json_att': '',
-            'REPEAT_SUBMIT_TOKEN': self.user_ins.global_repeat_submit_token,
-        }
-        response = self.session.post(API_GET_QUEUE_COUNT, data)
-        result = response.json()
-        if result.get('status', False):  # 成功
-            """
-            "data": { 
-                "count": "66",
-                "ticket": "0,73", 
-                "op_2": "false",
-                "countT": "0",
-                "op_1": "true"
+        def fail(message):
+            self.failure_reason = message
+            OrderLog.add_quick_log('排队余票校验失败：' + message).flush()
+            return False
+
+        try:
+            form = self.user_ins.ticket_info_for_passenger_form
+            dto = form['queryLeftTicketRequestDTO']
+            data = {
+                'train_date': '{} 00:00:00 GMT+0800 (China Standard Time)'.format(
+                    datetime.datetime.strptime(self.query_ins.left_date, '%Y-%m-%d').strftime('%a %h %d %Y')),
+                'train_no': dto['train_no'],
+                'stationTrainCode': dto['station_train_code'],
+                'seatType': self.query_ins.current_order_seat,
+                'fromStationTelecode': dto['from_station'],
+                'toStationTelecode': dto['to_station'],
+                'leftTicket': form['leftTicketStr'],
+                'purpose_codes': form['purpose_codes'],
+                'train_location': form['train_location'],
+                '_json_att': '',
+                'REPEAT_SUBMIT_TOKEN': self.user_ins.global_repeat_submit_token,
             }
-            
-            """
-            # if result.get('isRelogin') == 'Y': # 重新登录 TODO
+        except (KeyError, TypeError, ValueError, AttributeError):
+            return fail('订单页面缺少排队必需字段')
+        try:
+            response = self.session.post(API_GET_QUEUE_COUNT, data, timeout=10)
+            status_code = getattr(response, 'status_code', None)
+            if status_code != 200:
+                return fail('12306 排队接口 HTTP 状态码 {}'.format(status_code or '未知'))
+            result = response.json()
+        except (OSError, ValueError, TypeError, AttributeError):
+            return fail('12306 排队接口请求失败或响应无法解析')
 
-            ticket = result.get('data.ticket').split(',')  # 余票列表
-            # 这里可以判断 是真实是 硬座还是无座，避免自动分配到无座
-            ticket_number = ticket[0]  # 余票
-            if ticket_number != '充足' and int(ticket_number) <= 0:
-                if self.query_ins.current_seat == SeatType.NO_SEAT:  # 允许无座
-                    ticket_number = ticket[1]
-                if not int(ticket_number):  # 跳过无座
-                    OrderLog.add_quick_log(OrderLog.MESSAGE_GET_QUEUE_INFO_NO_SEAT).flush()
-                    return False
+        if not isinstance(result, dict) or not result.get('status'):
+            return fail('12306 排队接口未确认成功（可能余票不足或账号状态异常）')
+        payload = result.get('data')
+        if not isinstance(payload, dict):
+            return fail('12306 排队接口未返回有效 data 对象')
+        ticket_raw = payload.get('ticket')
+        if not isinstance(ticket_raw, str) or not ticket_raw.strip():
+            return fail('12306 排队接口未返回 ticket 余票字段')
+        tickets = [part.strip() for part in ticket_raw.split(',')]
+        ticket_number = tickets[0]
+        if ticket_number not in ('有', '充足'):
+            try:
+                count = int(ticket_number)
+            except (ValueError, TypeError):
+                return fail('12306 返回了无法识别的排队余票数量')
+            if count <= 0:
+                if self.query_ins.current_seat == SeatType.NO_SEAT and len(tickets) > 1:
+                    ticket_number = tickets[1]
+                    if ticket_number not in ('有', '充足'):
+                        try:
+                            count = int(ticket_number)
+                        except (ValueError, TypeError):
+                            return fail('12306 返回了无法识别的无座余票数量')
+                        if count <= 0:
+                            return fail('该席别无余票，未进入排队')
+                else:
+                    return fail('该席别无余票，未进入排队')
+            elif count < max(1, self.query_ins.member_num_take):
+                return fail('排队接口余票少于乘车人数，未进入排队')
 
-            if result.get('data.op_2') == 'true':
-                OrderLog.add_quick_log(OrderLog.MESSAGE_GET_QUEUE_LESS_TICKET).flush()
-                return False
+        if payload.get('op_2') in (True, 'true', 'True'):
+            return fail('排队人数超过余票数量')
+        try:
+            current_position = int(payload.get('countT') or 0)
+        except (ValueError, TypeError):
+            current_position = 0
+        OrderLog.add_quick_log(
+            OrderLog.MESSAGE_GET_QUEUE_INFO_SUCCESS.format(current_position, ticket_number)).flush()
+        return True
 
-            current_position = int(result.get('data.countT', 0))
-            OrderLog.add_quick_log(
-                OrderLog.MESSAGE_GET_QUEUE_INFO_SUCCESS.format(current_position, ticket_number)).flush()
-            return True
-        else:
-            # 加入小黑屋
-            OrderLog.add_quick_log(OrderLog.MESSAGE_GET_QUEUE_COUNT_FAIL.format(
-                result.get('messages', result.get('validateMessages', CommonLog.MESSAGE_RESPONSE_EMPTY_ERROR)))).flush()
-        return False
 
     def confirm_single_for_queue(self):
         """

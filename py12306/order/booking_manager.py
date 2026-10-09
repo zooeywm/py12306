@@ -4,6 +4,9 @@ This module does not handle payment, and never exposes secretStr or identity num
 through the Web API. Every order is bound to one immutable query snapshot.
 """
 import copy
+import json
+import os
+import tempfile
 import threading
 import time
 from datetime import datetime
@@ -31,10 +34,50 @@ class BookingManager:
                 instance.inflight = False
                 instance.last_attempts = {}  # auto retry cooldown, scoped to candidate
                 instance.finished_accounts = set()  # protect against duplicate purchases
-                instance.auto_paused_accounts = set()  # do not retry uncertain results automatically
+                instance.auto_paused_accounts = cls._read_paused_accounts()  # restart-safe failure latch
                 instance.status = {'state': 'idle', 'message': '尚未提交订单'}
                 cls._instance = instance
             return cls._instance
+
+    @staticmethod
+    def _pause_file():
+        return os.path.join(Config().RUNTIME_DIR, 'booking-paused-accounts.json')
+
+    @classmethod
+    def _read_paused_accounts(cls):
+        try:
+            with open(cls._pause_file(), encoding='utf-8') as stream:
+                values = json.load(stream)
+            if isinstance(values, list):
+                return {item for item in values if isinstance(item, str) and item}
+        except (OSError, ValueError, TypeError):
+            pass
+        return set()
+
+    @classmethod
+    def _write_paused_accounts(cls, accounts):
+        """Atomic, local-only latch. It contains account keys, not credentials."""
+        destination = cls._pause_file()
+        folder = os.path.dirname(destination)
+        staged = None
+        try:
+            os.makedirs(folder, mode=0o700, exist_ok=True)
+            descriptor, staged = tempfile.mkstemp(prefix='.booking-pause-', dir=folder)
+            with os.fdopen(descriptor, 'w', encoding='utf-8') as stream:
+                os.fchmod(stream.fileno(), 0o600)
+                json.dump(sorted(accounts), stream, ensure_ascii=False)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(staged, destination)
+            return True
+        except (OSError, ValueError, TypeError):
+            return False
+        finally:
+            if staged and os.path.exists(staged):
+                try:
+                    os.unlink(staged)
+                except OSError:
+                    pass
 
     @staticmethod
     def _task(name):
@@ -223,13 +266,12 @@ class BookingManager:
             raise BookingError('无法启动下单线程')
         return data
 
-    @staticmethod
-    def _persist_auto_pause(account_key):
-        """Disable configured automatic orders for this account across restarts.
+    def _persist_auto_pause(self, account_key):
+        """Persist the failure latch first, then disable enabled env.py rules."""
+        with self.lock:
+            self.auto_paused_accounts.add(str(account_key))
+            latch_saved = self._write_paused_accounts(self.auto_paused_accounts)
 
-        Updating env.py is guarded by the same lock used by Web task changes.
-        A failed write is surfaced in Web status; in-memory protection remains.
-        """
         try:
             from py12306.web.handler.manage import _lock, _save_jobs
             with _lock:
@@ -244,11 +286,10 @@ class BookingManager:
                         changed = True
                 if changed:
                     _save_jobs(current)
-            return True
+            config_saved = True
         except Exception:
-            # Keep the in-memory pause, and tell Web users to disable the task
-            # manually before restarting if its persisted update failed.
-            return False
+            config_saved = False
+        return latch_saved, config_saved
 
     def _worker(self, job, user, account_key):
         result = False
@@ -302,14 +343,22 @@ class BookingManager:
                 if order_id:
                     self.status['order_id'] = str(order_id)
                 self.inflight = False
-            if not result and not self._persist_auto_pause(account_key):
+            if not result:
+                latch_saved, config_saved = self._persist_auto_pause(account_key)
                 with self.lock:
-                    self.status['message'] += (
-                        '；自动暂停未能写入 env.py，重启前请在 Web 手动关闭自动抢票')
+                    if not latch_saved:
+                        self.status['message'] += (
+                            '；暂停锁无法持久化，重启前请在 Web 手动关闭自动抢票')
+                    if not config_saved:
+                        self.status['message'] += (
+                            '；env.py 自动抢票配置未能关闭，请手动检查')
 
     def resume_auto(self, account_key):
         with self.lock:
-            self.auto_paused_accounts.discard(account_key)
+            remaining = self.auto_paused_accounts - {str(account_key)}
+            if not self._write_paused_accounts(remaining):
+                raise BookingError('无法保存自动抢票的重启安全状态，拒绝重新启用')
+            self.auto_paused_accounts = remaining
             self.last_attempts = {k: v for k, v in self.last_attempts.items() if k[0] != account_key}
 
     def get_status(self):
