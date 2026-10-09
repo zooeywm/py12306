@@ -53,8 +53,6 @@ def _auth_required(fn):
 
 
 def _write_allowed():
-    if Config().USER_ACCOUNTS:
-        raise BadTask('网页任务管理目前仅支持纯监控：请先将 USER_ACCOUNTS = []')
     if Config().is_cluster_enabled():
         raise BadTask('网页任务管理暂不支持集群模式')
     if request.headers.get('X-Py12306-Manage') != '1' or not request.is_json:
@@ -240,7 +238,7 @@ def manage_page():
 @manage.route('/manage/api/tasks', methods=['GET'])
 @_auth_required
 def tasks_list():
-    return jsonify(tasks=_safe_tasks(Config().QUERY_JOBS), can_edit=not bool(Config().USER_ACCOUNTS))
+    return jsonify(tasks=_safe_tasks(Config().QUERY_JOBS), can_edit=True)
 
 
 @manage.route('/manage/api/availability', methods=['GET'])

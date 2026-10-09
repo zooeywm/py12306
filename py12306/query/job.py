@@ -189,8 +189,11 @@ class Job:
         results = self.get_results(response)
         if not results:
             return False
-        if User.is_empty() or self.monitor_only:
+        # A configured 12306 account must not trigger legacy implicit ordering.
+        if not getattr(self, 'legacy_order_opt_in', False):
             self.seat_monitor.update(self, results)
+            from py12306.order.booking_manager import BookingManager
+            BookingManager().on_query(self, results)
             return
         for result in results:
             self.ticket_info = ticket_info = result.split('|')
