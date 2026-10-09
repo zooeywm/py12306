@@ -432,11 +432,38 @@ class Order:
         if isinstance(ticket_raw, int) and not isinstance(ticket_raw, bool):
             ticket_raw = str(ticket_raw)
         if not isinstance(ticket_raw, str) or not ticket_raw.strip():
-            safe_field_names = ('ticket', 'count', 'countT', 'op_1', 'op_2',
-                                'errMsg', 'errorCode', 'submitStatus')
-            present = ', '.join(name for name in safe_field_names if name in payload) or '无'
-            return fail('12306 排队接口未返回有效 ticket 余票字段'
-                        '（data 字段数：{}；可识别字段：{}）'.format(len(payload), present))
+            # Only report schema-level metadata. No ticket values or private
+            # session, passenger, token or raw response fields are logged.
+            if 'ticket' not in payload:
+                ticket_shape = '缺失'
+            elif ticket_raw is None:
+                ticket_shape = 'null'
+            elif isinstance(ticket_raw, bool):
+                ticket_shape = '布尔值'
+            elif isinstance(ticket_raw, str):
+                ticket_shape = '空字符串' if not ticket_raw else '仅空白字符'
+            elif isinstance(ticket_raw, (list, tuple)):
+                ticket_shape = '数组'
+            elif isinstance(ticket_raw, dict):
+                ticket_shape = '对象'
+            else:
+                ticket_shape = '其他非字符串类型'
+
+            def safe_flag(key):
+                value = payload.get(key)
+                if value is True or value == 'true':
+                    return 'true'
+                if value is False or value == 'false':
+                    return 'false'
+                if value is None:
+                    return 'null'
+                return '其他值'
+
+            return fail('12306 排队接口 ticket 字段不可解析：{}'
+                        '（countT 字段{}；op_1={}, op_2={}；已停止本次下单，'
+                        '不以排队人数替代余票数）'.format(
+                            ticket_shape, '存在' if 'countT' in payload else '缺失',
+                            safe_flag('op_1'), safe_flag('op_2')))
         tickets = [part.strip() for part in ticket_raw.split(',')]
         ticket_number = tickets[0]
         if ticket_number not in ('有', '充足'):

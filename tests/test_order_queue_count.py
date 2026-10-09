@@ -84,6 +84,50 @@ class QueueSupplyTests(unittest.TestCase):
     def test_queue_numeric_ticket(self):
         self.check({'status': True, 'data': {'ticket': 8, 'countT': 0}}, True)
 
+    def test_ticket_null_with_present_key_reports_null(self):
+        order = self.make_order(FakeResponse({'status': True, 'data': {
+            'ticket': None, 'count': '7', 'countT': '0',
+            'op_1': 'false', 'op_2': 'false',
+        }}))
+        with patch('py12306.order.order.OrderLog.add_quick_log'):
+            self.assertFalse(order.get_queue_count())
+        self.assertIn('ticket 字段不可解析：null', order.failure_reason)
+        self.assertIn('countT 字段存在', order.failure_reason)
+        self.assertIn('op_2=false', order.failure_reason)
+
+    def test_empty_and_whitespace_ticket_are_distinguished(self):
+        for ticket, expected in [('', '空字符串'), ('   ', '仅空白字符')]:
+            with self.subTest(ticket=ticket):
+                order = self.make_order(FakeResponse({
+                    'status': True, 'data': {'ticket': ticket, 'op_1': False}
+                }))
+                with patch('py12306.order.order.OrderLog.add_quick_log'):
+                    self.assertFalse(order.get_queue_count())
+                self.assertIn(expected, order.failure_reason)
+
+    def test_ticket_wrong_type_is_safely_reported(self):
+        for ticket, expected in [(True, '布尔值'), ([], '数组'), ({}, '对象')]:
+            with self.subTest(ticket_type=expected):
+                order = self.make_order(FakeResponse({
+                    'status': True, 'data': {'ticket': ticket}
+                }))
+                with patch('py12306.order.order.OrderLog.add_quick_log'):
+                    self.assertFalse(order.get_queue_count())
+                self.assertIn(expected, order.failure_reason)
+
+    def test_malformed_ticket_not_logged_even_with_private_value(self):
+        sensitive = 'PRIVATE_DO_NOT_LOG'
+        order = self.make_order(FakeResponse({
+            'status': True,
+            'data': {'ticket': {'passenger': sensitive}, 'op_1': sensitive}
+        }))
+        with patch('py12306.order.order.OrderLog.add_quick_log') as mocked:
+            self.assertFalse(order.get_queue_count())
+        self.assertNotIn(sensitive, order.failure_reason)
+        log_lines = ' '.join(str(call) for call in mocked.call_args_list)
+        self.assertNotIn(sensitive, log_lines)
+
+
     def test_queue_full_queue_without_ticket(self):
         order = self.make_order(FakeResponse({'status': True, 'data': {'op_2': 'true'}}))
         with patch('py12306.order.order.OrderLog.add_quick_log'):
