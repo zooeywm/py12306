@@ -177,7 +177,10 @@
           <summary id="exclude-trains-summary">不排除任何车次</summary>
           <div class="train-popover"><input id="exclude-trains-search" type="search" placeholder="筛选车次" aria-label="查找排除车次" autocomplete="off"><div id="exclude-trains-options" class="train-options"></div></div>
         </details></div>
-        <div class="wide picker-help">车次来自相同出发站、到达站及日期的最新余票查询；如暂无查询记录，请先保存并启动任务，查询到车次后再编辑选择。指定与排除不可同时设置。</div>
+        <div class="wide actions">
+          <button id="query-trains" type="button" class="small">查询可选车次</button>
+          <span id="query-trains-status" class="picker-help" role="status">优先使用同线路同日期的实时余票；点击按钮可主动查询新任务的车次。指定与排除不能同时设置。</span>
+        </div>
       </div>
       <div id="error" class="message" role="alert"></div>
       <div class="form-actions"><button id="cancel" type="button">取消</button><button id="save" class="primary" type="submit">保存任务</button></div>
@@ -208,6 +211,7 @@
   toTime.value='24:00';
   let selectedSeats=['二等座'];
   let selectedTrains={include:[],exclude:[]};
+  const queriedTrains=new Map();
   let stations=[];
   let stationLoadError='';
   const stationNames=new Set();
@@ -615,9 +619,14 @@
     if(!event.target.closest('.station-combo'))closeStationOptions();
   });
 
+  function trainRouteKey(){
+    return [$('date').value,$('left').value.trim(),$('arrive').value.trim()].join('|');
+  }
   function trainCandidates(){
     const origin=$('left').value.trim(),destination=$('arrive').value.trim(),date=$('date').value;
     const map=new Map();
+    for(const item of queriedTrains.get(trainRouteKey())||[])
+      map.set(item.train,item);
     for(const group of availabilityCache){
       for(const route of group.routes||[]){
         if(route.left!==origin||route.arrive!==destination||route.date!==date)continue;
@@ -675,6 +684,25 @@
     $(mode+'-trains-search').addEventListener('input',refreshTrainPickers);
     $(mode+'-trains').addEventListener('toggle',()=>refreshTrainPickers());
   }
+  $('query-trains').addEventListener('click',async()=>{
+    const left=$('left').value.trim(),arrive=$('arrive').value.trim(),date=$('date').value;
+    if(!left||!arrive||!date||left===arrive){
+      $('query-trains-status').textContent='请先选择有效的出发站、到达站和日期';return;
+    }
+    const key=trainRouteKey(),button=$('query-trains');
+    button.disabled=true;
+    $('query-trains-status').textContent='正在查询 12306 车次…';
+    try{
+      const params=new URLSearchParams({left,arrive,date});
+      const result=await api('/manage/api/train-options?'+params.toString());
+      if(key!==trainRouteKey())return;  // The user changed the route during the request.
+      queriedTrains.set(key,result.trains||[]);
+      refreshTrainPickers();
+      $('query-trains-status').textContent=`已获取 ${(result.trains||[]).length} 趟车次；可打开指定或排除下拉栏多选`;
+    }catch(error){
+      $('query-trains-status').textContent='查询失败：'+error.message;
+    }finally{button.disabled=false;}
+  });
   $('date').addEventListener('change',()=>{
     selectedTrains={include:[],exclude:[]};refreshTrainPickers();
   });
@@ -703,6 +731,7 @@
     renderSeats();
     refreshTrainPickers();
     $('error').textContent='';
+    $('query-trains-status').textContent='来自同线路、同日期的余票缓存；需要其他车次可点击“查询可选车次”。';
     $('editor').classList.remove('hide');
     if(task){
       render();
