@@ -186,10 +186,19 @@
     const button=document.createElement('button');button.type='button';button.textContent=text;button.className='small '+cls;button.disabled=!canEdit || busy;button.addEventListener('click',handler);return button;
   }
   function render() {
-    const root=$('tasks');root.replaceChildren();$('add').disabled=!canEdit || busy;
-    if(!items.length){addText(root,'div','没有查询任务。点击“新增任务”开始配置。','card empty');return;}
+    const root=$('tasks'),editor=$('editor');
+    // Preserve the form and unsaved values when task cards are rebuilt.
+    if(editing!==null && !editor.classList.contains('hide'))$('editor-parking').append(editor);
+    root.replaceChildren();
+    availabilityPanels.clear();
+    $('add').disabled=!canEdit||busy;
+    if(!items.length){
+      addText(root,'div','没有查询任务。点击“新增任务”开始配置。','card empty');
+      return;
+    }
     for(const task of items){
-      const card=document.createElement('article');card.className='card task';
+      const card=document.createElement('article');card.className='card task-card';
+      const header=document.createElement('div');header.className='task';
       const body=document.createElement('div');body.className='task-body';
       const h=addText(body,'h3',task.job_name+' ','');
       addText(h,'span',task.enabled?'运行中':'已暂停','pill '+(task.enabled?'on':'off'));
@@ -197,15 +206,39 @@
       addText(body,'div',`${task.from_time}—${task.to_time}  ·  ${task.train_numbers?'指定：'+task.train_numbers:'全部车次'}${task.except_train_numbers?' · 排除：'+task.except_train_numbers:''}`,'meta');
       if(!task.monitor_only)addText(body,'div','旧任务：尚未标记 monitor_only，编辑或切换状态后将转换为纯监控任务','meta');
       const actions=document.createElement('div');actions.className='task-actions';
-      actions.append(actionButton('编辑',()=>openEditor(task)), actionButton(task.enabled?'暂停':'启动',()=>toggle(task)));
+      actions.append(actionButton(editing===task.index?'编辑中':'编辑',()=>openEditor(task)),
+                     actionButton(task.enabled?'暂停':'启动',()=>toggle(task)));
       actions.append(actionButton('删除',()=>remove(task),'danger'));
-      card.append(body,actions);root.append(card);
+      header.append(body,actions);card.append(header);
+      if(editing===task.index && !editor.classList.contains('hide'))card.append(editor);
+
+      const details=document.createElement('details');details.className='task-availability';
+      details.open=expandedTasks.has(task.job_name);
+      const title=document.createElement('summary');title.textContent='实时余票 · 等待更新';
+      const panel=document.createElement('div');panel.className='task-availability-content';
+      details.append(title,panel);
+      availabilityPanels.set(task.index,{task,details,title,panel});
+      details.addEventListener('toggle',()=>{
+        if(!details.isConnected)return;
+        if(details.open)expandedTasks.add(task.job_name);
+        else expandedTasks.delete(task.job_name);
+        renderTaskAvailability(task,details,title,panel);
+      });
+      card.append(details);root.append(card);
     }
+    renderAvailability(availabilityCache);
   }
   async function refresh(){
-    try{const data=await api('/manage/api/tasks');items=data.tasks;canEdit=data.can_edit;render();
-      if(!canEdit){$('editor').classList.add('hide');addText($('tasks'),'p','检测到 USER_ACCOUNTS 非空：网页编辑已被禁用。请先切换为纯监控模式。','note');}
-    } catch(e){$('tasks').replaceChildren();addText($('tasks'),'div','加载失败：'+e.message,'card empty');}
+    try{
+      const data=await api('/manage/api/tasks');
+      items=data.tasks;canEdit=data.can_edit;
+      if(!canEdit)closeEditor();
+      render();
+      if(!canEdit)addText($('tasks'),'p','当前配置禁止网页编辑任务。','note');
+    }catch(e){
+      $('tasks').replaceChildren();
+      addText($('tasks'),'div','加载失败：'+e.message,'card empty');
+    }
   }
   const tagTips={
     '静':'设有静音车厢','兑':'支持积分兑换车票','敬':'敬老优惠（以官方当日条件为准）',
