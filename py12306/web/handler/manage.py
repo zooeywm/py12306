@@ -265,6 +265,17 @@ def availability():
     return response
 
 
+@manage.route('/manage/api/stations/all', methods=['GET'])
+@_auth_required
+def all_stations():
+    """Return the locally cached 12306 station dataset once for searchable dropdowns."""
+    stations = [{'name': info['name'], 'pinyin': info.get('pinyin', '')}
+                for info in Station().stations if info.get('name')]
+    response = jsonify(stations=list({info['name']: info for info in stations}.values()))
+    response.headers['Cache-Control'] = 'private, max-age=3600'
+    return response
+
+
 @manage.route('/manage/api/stations', methods=['GET'])
 @_auth_required
 def station_lookup():
