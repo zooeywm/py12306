@@ -206,12 +206,49 @@
     const el=document.createElement('option');el.value=t;el.textContent=t;toTime.insertBefore(el,toTime.lastElementChild);
   }
   toTime.value='24:00';
-  seatNames.forEach(name => {
-    const label=document.createElement('label');
-    const checkbox=document.createElement('input'); checkbox.type='checkbox'; checkbox.value=name;checkbox.name='seat';
-    if(name==='二等座') checkbox.checked=true;
-    label.append(checkbox,document.createTextNode(name));$('seat-options').append(label);
-  });
+  let selectedSeats=['二等座'];
+  let selectedTrains={include:[],exclude:[]};
+  let stations=[];
+  let stationLoadError='';
+  const stationNames=new Set();
+  const trainModes=['include','exclude'];
+
+  function renderSeats(){
+    const selected=$('seat-selected'),available=$('seat-available');
+    selected.replaceChildren();available.replaceChildren();
+    if(!selectedSeats.length)addText(selected,'p','尚未选择席别，请从右侧添加','train-empty');
+    selectedSeats.forEach((name,index)=>{
+      const row=document.createElement('div');row.className='seat-row';
+      addText(row,'span',`${index+1}. ${name}`);
+      const actions=document.createElement('div');actions.className='actions';
+      const change=(label,disabled,handler)=>{
+        const btn=document.createElement('button');btn.type='button';btn.textContent=label;
+        btn.title=label==='↑'?'提高抢票优先级':label==='↓'?'降低抢票优先级':'移除席别';
+        btn.disabled=disabled;
+        btn.addEventListener('click',handler);actions.append(btn);
+      };
+      const move=to=>{
+        [selectedSeats[index],selectedSeats[to]]=[selectedSeats[to],selectedSeats[index]];
+        renderSeats();
+      };
+      change('↑',index===0,()=>move(index-1));
+      change('↓',index===selectedSeats.length-1,()=>move(index+1));
+      change('移除',false,()=>{selectedSeats.splice(index,1);renderSeats();});
+      row.append(actions);selected.append(row);
+    });
+    for(const name of seatNames){
+      const button=document.createElement('button');button.type='button';
+      button.className='seat-row selectable';button.textContent=name;
+      const active=selectedSeats.includes(name);
+      button.disabled=active;
+      if(active)button.title='已添加至左侧';
+      button.addEventListener('click',()=>{
+        if(!selectedSeats.includes(name)){selectedSeats.push(name);renderSeats();}
+      });
+      available.append(button);
+    }
+  }
+  renderSeats();
   async function api(url, method='GET', body) {
     const options={method,cache:'no-store',credentials:'same-origin',headers:{}};
     if(body!==undefined){options.headers['Content-Type']='application/json';options.headers['X-Py12306-Manage']='1';options.body=JSON.stringify(body);}
