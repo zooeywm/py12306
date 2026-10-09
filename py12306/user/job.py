@@ -13,6 +13,7 @@ from py12306.helpers.func import *
 from py12306.helpers.request import Request
 from py12306.helpers.type import UserType
 from py12306.helpers.qrcode import print_qrcode
+from py12306.helpers.order_page_parser import parse_js_object_assignment
 from py12306.log.order_log import OrderLog
 from py12306.log.user_log import UserLog
 from py12306.log.common_log import CommonLog
@@ -775,30 +776,21 @@ class UserJob:
             return failed('12306 系统繁忙')
 
         token = re.search(r"var\s+globalRepeatSubmitToken\s*=\s*['\"]([^'\"]+)['\"]", html)
-        form = re.search(r'\bvar\s+ticketInfoForPassengerForm\s*=\s*', html)
-        order = re.search(r'\bvar\s+orderRequestDTO\s*=\s*', html)
-        missing = []
         if not token:
-            missing.append('提交令牌')
-        if not form:
-            missing.append('乘车人表单')
-        if not order:
-            missing.append('订单请求信息')
-        if missing:
-            return failed('页面缺少{}（可能需要重新登录或 12306 页面已变化）'.format('、'.join(missing)))
+            return failed('缺少提交令牌（登录已失效或订单页面结构变化）')
         try:
-            # raw_decode stops at the end of each JSON object, even when more
-            # JavaScript variables follow. The old greedy \{.+\} swallowed them.
-            decoder = json.JSONDecoder()
-            ticket_info, _ = decoder.raw_decode(
-                html[form.end():].lstrip().replace("'", '"'))
-            order_info, _ = decoder.raw_decode(
-                html[order.end():].lstrip().replace("'", '"'))
-            if not isinstance(ticket_info, dict) or not isinstance(order_info, dict):
-                return failed('订单页面表单结构异常')
-        except (ValueError, TypeError):
-            return failed('订单页面表单数据无法解析（可能是 12306 页面格式已变化）')
-
+            ticket_info = parse_js_object_assignment(html, 'ticketInfoForPassengerForm')
+        except ValueError:
+            return failed('乘车人表单解析失败（12306 JavaScript 对象格式）')
+        try:
+            order_info = parse_js_object_assignment(html, 'orderRequestDTO')
+        except ValueError:
+            return failed('订单请求信息解析失败（12306 JavaScript 对象格式）')
+        required = ('queryLeftTicketRequestDTO', 'leftTicketStr',
+                    'purpose_codes', 'train_location', 'key_check_isChange')
+        if (not all(key in ticket_info for key in required)
+                or not isinstance(ticket_info.get('queryLeftTicketRequestDTO'), dict)):
+            return failed('乘车人表单缺少下单必需字段')
         self.global_repeat_submit_token = token.group(1)
         self.ticket_info_for_passenger_form = ticket_info
         self.order_request_dto = order_info
