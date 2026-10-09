@@ -26,6 +26,7 @@ from py12306.query.query import Query
 manage = Blueprint('task_manage', __name__)
 _lock = threading.RLock()
 _TRAIN_RE = re.compile(r'^[A-Za-z0-9]{1,8}$')
+_TRAIN_MODELS = ('复兴号', '和谐号', '火车')
 _TIME_RE = re.compile(r'^(?:[01][0-9]|2[0-3]):[0-5][0-9]$')
 _train_query_lock = threading.Lock()
 _train_query_cache = {}
@@ -108,6 +109,11 @@ def _validated(payload, previous=None):
     if any(not isinstance(seat, str) or seat not in SeatType.dicts for seat in seats):
         raise BadTask('包含不支持的席别')
     seats = list(dict.fromkeys(seats))
+    models = payload.get('train_models', list(_TRAIN_MODELS))
+    if not isinstance(models, list) or not models or any(
+            not isinstance(model, str) or model not in _TRAIN_MODELS for model in models):
+        raise BadTask('至少选择一种有效车型')
+    models = list(dict.fromkeys(models))
     trains = _csv(payload.get('train_numbers', ''))
     excluded = _csv(payload.get('except_train_numbers', ''))
     if trains and excluded:
@@ -126,6 +132,7 @@ def _validated(payload, previous=None):
         'members': [],
         'allow_less_member': 0,
         'seats': seats,
+        'train_models': models,
         'train_numbers': trains,
         'except_train_numbers': excluded,
         'period': {'from': start, 'to': end},
@@ -150,6 +157,7 @@ def _safe_tasks(tasks):
             'arrive': stations.get('arrive', ''),
             'date': dates[0] if dates else '',
             'seats': job.get('seats') or [],
+            'train_models': job.get('train_models') or list(_TRAIN_MODELS),
             'train_numbers': ','.join(job.get('train_numbers') or []),
             'except_train_numbers': ','.join(job.get('except_train_numbers') or []),
             'from_time': period.get('from', '00:00'),

@@ -36,6 +36,8 @@ def decode_train_tags(fields):
         models.append('和谐号')  # UI fallback, not an official train model field
     if part(0) == '5':
         models.append('智能动车组')
+    if not any(name in models for name in ('复兴号', '和谐号')):
+        models.insert(0, '火车')  # Previously unclassified model in the dashboard.
     # Some newer flags encode Q=quiet coach, R=comfort sleeper.
     if part(2).startswith('Q'):
         services.append('静')
@@ -50,6 +52,12 @@ def decode_train_tags(fields):
     if part(5) == 'D':
         services.append('动感号')
     return models, services
+
+
+def train_model_category(fields):
+    """Return the mutually exclusive task-filter category for a 12306 train."""
+    models, _ = decode_train_tags(fields)
+    return next((name for name in ('复兴号', '和谐号') if name in models), '火车')
 
 
 # The leftTicket/query* response carries journey duration (field 10) and the

@@ -1,6 +1,6 @@
 from datetime import timedelta
 from datetime import datetime
-from py12306.query.seat_monitor import SeatMonitor
+from py12306.query.seat_monitor import SeatMonitor, train_model_category
 
 from py12306.app import app_available_check
 from py12306.cluster.cluster import Cluster
@@ -40,6 +40,7 @@ class Job:
     current_order_seat = None
     allow_train_numbers = []
     except_train_numbers = []
+    train_models = []
     members = []
     member_num = 0
     member_num_take = 0  # 最终提交的人数
@@ -90,6 +91,8 @@ class Job:
         self.allow_seats = info.get('seats')
         self.allow_train_numbers = info.get('train_numbers')
         self.except_train_numbers = info.get('except_train_numbers')
+        # Existing jobs without this setting continue monitoring every model.
+        self.train_models = info.get('train_models') or ['复兴号', '和谐号', '火车']
         self.members = list(map(str, info.get('members')))
         self.member_num = len(self.members)
         self.member_num_take = self.member_num
@@ -291,6 +294,8 @@ class Job:
         left_time = timedelta(
             hours=int(time_parts[0]), seconds=int(time_parts[1]))
         if left_time < self.from_time or left_time > self.to_time:
+            return False
+        if train_model_category(self.ticket_info) not in self.train_models:
             return False
 
         if self.except_train_numbers:

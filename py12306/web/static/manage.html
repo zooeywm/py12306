@@ -129,6 +129,7 @@
           <div class="filter-range"><input data-filter="duration-min" type="number" min="0" step="1" placeholder="最短" aria-label="最短历时分钟数"><span>至</span><input data-filter="duration-max" type="number" min="0" step="1" placeholder="最长" aria-label="最长历时分钟数"></div>
         </div>
         <div class="filter-field"><label>席别</label><select data-filter="seat" aria-label="筛选席别"><option value="">全部席别</option></select></div>
+        <div class="filter-field"><label>车型</label><select data-filter="model" aria-label="筛选车型"><option value="">全部车型</option><option value="复兴号">复兴号</option><option value="和谐号">和谐号</option><option value="火车">火车</option></select></div>
         <div class="filter-field">
           <label>价格（元）</label>
           <div class="filter-range"><input data-filter="price-min" type="number" min="0" step="0.01" placeholder="最低" aria-label="最低票价"><span>至</span><input data-filter="price-max" type="number" min="0" step="0.01" placeholder="最高" aria-label="最高票价"></div>
@@ -156,6 +157,15 @@
             <div class="seat-column"><strong>全部席别 · 点击添加 → 左侧</strong><div id="seat-available" class="seat-list"></div></div>
           </div>
         </div>
+        <div class="field wide">
+          <span class="label">车型筛选（可多选）</span>
+          <div class="seats" id="train-models" role="group" aria-label="车型筛选">
+            <label><input type="checkbox" value="复兴号" checked>复兴号</label>
+            <label><input type="checkbox" value="和谐号" checked>和谐号</label>
+            <label><input type="checkbox" value="火车" checked>火车</label>
+          </div>
+          <span class="picker-help">“火车”指目前未分类为复兴号或和谐号的车次。</span>
+        </div>
         <div class="field"><span class="label">指定车次（可多选）</span><details id="include-trains" class="train-picker">
           <summary id="include-trains-summary">全部车次（未指定）</summary>
           <div class="train-popover"><input id="include-trains-search" type="search" placeholder="筛选车次" aria-label="查找指定车次" autocomplete="off"><div id="include-trains-options" class="train-options"></div></div>
@@ -181,6 +191,7 @@
   'use strict';
   const $ = id => document.getElementById(id);
   const seatNames = ['二等座','一等座','商务座','特等座','软卧','硬卧','动卧','软座','硬座','无座'];
+  const trainModelNames = ['复兴号','和谐号','火车'];
   let items = [], editing = null, canEdit = true, busy = false;
   const expandedTasks = new Set();
   const availabilityPanels = new Map();
@@ -272,7 +283,7 @@
       const h=addText(body,'h3',task.job_name+' ','');
       addText(h,'span',task.enabled?'运行中':'已暂停','pill '+(task.enabled?'on':'off'));
       addText(body,'div',`${task.left} → ${task.arrive} · ${task.date} · ${(task.seats||[]).join(' / ')}`,'meta');
-      addText(body,'div',`${task.from_time}—${task.to_time}  ·  ${task.train_numbers?'指定：'+task.train_numbers:'全部车次'}${task.except_train_numbers?' · 排除：'+task.except_train_numbers:''}`,'meta');
+      addText(body,'div',`车型：${(task.train_models||trainModelNames).join(' / ')} · ${task.from_time}—${task.to_time}  ·  ${task.train_numbers?'指定：'+task.train_numbers:'全部车次'}${task.except_train_numbers?' · 排除：'+task.except_train_numbers:''}`,'meta');
       if(!task.monitor_only)addText(body,'div','旧任务：尚未标记 monitor_only，编辑或切换状态后将转换为纯监控任务','meta');
       const actions=document.createElement('div');actions.className='task-actions';
       actions.append(actionButton(editing===task.index?'编辑中':'编辑',()=>openEditor(task)),
@@ -317,7 +328,7 @@
   }
   const tagTips={
     '静':'设有静音车厢','兑':'支持积分兑换车票','敬':'敬老优惠（以官方当日条件为准）',
-    '铺':'支持在线选铺','复兴号':'复兴号动车组','和谐号':'按非复兴号的 G/D/C 动车组推定，并非接口提供的精确车型','智能动车组':'智能动车组',
+    '铺':'支持在线选铺','复兴号':'复兴号动车组','和谐号':'按非复兴号的 G/D/C 动车组推定，并非接口提供的精确车型','火车':'尚未分类为复兴号或和谐号的车次','智能动车组':'智能动车组',
     '温馨动卧':'温馨动卧','动感号':'动感号'
   };
   function renderTags(cell,tags,cls){
@@ -328,7 +339,7 @@
   }
   // These controls live outside availability-data and are never recreated by
   // polling, so typing a filter cannot lose focus every five seconds.
-  const filterIds=['depart-from','depart-to','duration-min','duration-max','seat',
+  const filterIds=['depart-from','depart-to','duration-min','duration-max','seat','model',
     'price-min','price-max','quantity-state'];
   const defaultSort={key:'departure',direction:'asc'};
   let availabilityCache=[];
@@ -396,6 +407,9 @@
     if(has('duration-min')&&(duration===null||duration<Number(v['duration-min'])))return false;
     if(has('duration-max')&&(duration===null||duration>Number(v['duration-max'])))return false;
     if(has('seat')&&item.seat!==v.seat)return false;
+    const models=Array.isArray(item.model_tags)?item.model_tags:[];
+    const model=models.includes('复兴号')?'复兴号':models.includes('和谐号')?'和谐号':'火车';
+    if(has('model')&&model!==v.model)return false;
     const price=priceRange(item.price);
     if(has('price-min')&&(price===null||price.max<Number(v['price-min'])))return false;
     if(has('price-max')&&(price===null||price.min>Number(v['price-max'])))return false;
@@ -733,6 +747,9 @@
     $('from_time').value=task?task.from_time:'00:00';
     $('to_time').value=task?task.to_time:'24:00';
     selectedSeats=task?[...(task.seats||[])]:['二等座'];
+    const chosenModels=task?(task.train_models||trainModelNames):trainModelNames;
+    for(const checkbox of $('train-models').querySelectorAll('input[type="checkbox"]'))
+      checkbox.checked=chosenModels.includes(checkbox.value);
     selectedTrains={
       include:task?String(task.train_numbers||'').split(',').filter(Boolean):[],
       exclude:task?String(task.except_train_numbers||'').split(',').filter(Boolean):[],
@@ -761,6 +778,7 @@
     from_time:$('from_time').value,to_time:$('to_time').value,
     train_numbers:selectedTrains.include.join(','),except_train_numbers:selectedTrains.exclude.join(','),
     seats:[...selectedSeats],
+    train_models:[...$('train-models').querySelectorAll('input:checked')].map(input=>input.value),
     enabled:editing===null?true:items[editing].enabled
   };}
   async function operation(url,method,body){
@@ -788,6 +806,7 @@
   $('task-form').addEventListener('submit',async ev=>{
     ev.preventDefault();
     if(!selectedSeats.length){$('error').textContent='至少选择一个席别';return;}
+    if(!$('train-models').querySelector('input:checked')){$('error').textContent='至少选择一种车型';return;}
     if(selectedTrains.include.length&&selectedTrains.exclude.length){
       $('error').textContent='指定车次和排除车次不能同时选择';return;
     }

@@ -10,6 +10,7 @@ from datetime import datetime
 
 from py12306.config import Config
 from py12306.helpers.type import SeatType
+from py12306.query.seat_monitor import train_model_category
 from py12306.user.user import User
 
 
@@ -152,10 +153,12 @@ class BookingManager:
         train = fields[3].upper()
         included = [t.upper() for t in task.get('train_numbers') or []]
         excluded = [t.upper() for t in task.get('except_train_numbers') or []]
+        allowed_models = task.get('train_models') or ['复兴号', '和谐号', '火车']
         period = task.get('period') or {}
         if (seat not in (task.get('seats') or [])
                 or (included and train not in included)
                 or train in excluded
+                or train_model_category(fields) not in allowed_models
                 or not (period.get('from', '00:00') <= fields[8] <= period.get('to', '24:00'))):
             raise BookingError('任务筛选条件已改变，拒绝使用旧余票记录')
         if not self._has_right_filters(job, fields, seat):
