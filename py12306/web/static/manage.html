@@ -68,6 +68,32 @@
     .task-modal{width:min(760px,calc(100% - 24px));max-height:calc(100vh - 32px);overflow:auto;background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:14px;padding:22px}
     .task-modal::backdrop{background:rgba(15,23,42,.62)}
     .task-modal .task-editor{border:0;margin:0;padding:0}
+    .station-combo{position:relative}
+    .station-options{position:absolute;z-index:25;top:calc(100% + 4px);left:0;right:0;max-height:240px;overflow:auto;background:var(--card);border:1px solid var(--border);border-radius:9px;box-shadow:0 8px 24px rgba(0,0,0,.14)}
+    .station-options[hidden]{display:none}
+    .station-option{display:block;width:100%;border:0;border-radius:0;padding:8px 11px;text-align:left;font-size:14px}
+    .station-option:hover,.station-option:focus-visible{background:var(--soft)}
+    .station-option small{margin-left:8px;color:var(--muted)}
+    .station-hint{padding:8px;font-size:12px;color:var(--muted)}
+    .seat-picker{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+    .seat-column{border:1px solid var(--border);border-radius:10px;padding:10px;min-width:0}
+    .seat-column>strong{display:block;font-size:13px;margin-bottom:7px}
+    .seat-list{min-height:104px;max-height:260px;overflow:auto;display:flex;flex-direction:column;gap:5px}
+    .seat-row{display:flex;justify-content:space-between;align-items:center;gap:6px;border:1px solid var(--border);border-radius:7px;padding:5px 8px;font-size:13px}
+    .seat-row .actions{gap:3px;flex-wrap:nowrap}
+    .seat-row button{font-size:12px;padding:3px 7px;border-radius:6px}
+    .seat-row.selectable{width:100%;text-align:left;cursor:pointer}
+    .seat-row.selectable:disabled{cursor:default;opacity:.5}
+    .train-picker{position:relative}
+    .train-picker>summary{cursor:pointer;border:1px solid var(--border);padding:10px 11px;border-radius:8px;font-size:13px;list-style-position:inside}
+    .train-popover{position:absolute;z-index:20;top:calc(100% + 4px);left:0;right:0;padding:10px;background:var(--card);border:1px solid var(--border);border-radius:9px;box-shadow:0 8px 24px rgba(0,0,0,.14)}
+    .train-options{max-height:230px;overflow:auto;display:flex;flex-direction:column;gap:4px;margin-top:8px}
+    .train-options label{display:flex;gap:8px;align-items:center;font-size:13px;font-weight:400;padding:5px;cursor:pointer;border-radius:6px}
+    .train-options label:hover{background:var(--soft)}
+    .train-options input[type="checkbox"]{width:auto}
+    .train-empty{color:var(--muted);font-size:12px;padding:6px}
+    .picker-help{font-size:12px;color:var(--muted);margin-top:6px}
+    @media(max-width:540px){.seat-picker{grid-template-columns:1fr}}
     #availability-status{font-size:12px;margin:8px 0 0}
     @media(max-width:600px){.form-grid{grid-template-columns:1fr}.task-actions{width:100%;justify-content:flex-start}.top{align-items:flex-start}.task-modal{padding:16px}.task-card{padding:14px}}
   </style>
@@ -132,13 +158,26 @@
     <form id="task-form">
       <div class="form-grid">
         <div class="field wide"><label for="job_name">任务名称</label><input id="job_name" maxlength="60" placeholder="例如：周末返程" autocomplete="off"></div>
-        <div class="field"><label for="left">出发站</label><input id="left" list="left-options" required placeholder="北京南" autocomplete="off"><datalist id="left-options"></datalist></div>
-        <div class="field"><label for="arrive">到达站</label><input id="arrive" list="arrive-options" required placeholder="上海虹桥" autocomplete="off"><datalist id="arrive-options"></datalist></div>
+        <div class="field"><label for="left">出发站</label><div class="station-combo"><input id="left" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="left-options" required placeholder="点击选择或输入车站" autocomplete="off"><div id="left-options" class="station-options" role="listbox" hidden></div></div></div>
+        <div class="field"><label for="arrive">到达站</label><div class="station-combo"><input id="arrive" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="arrive-options" required placeholder="点击选择或输入车站" autocomplete="off"><div id="arrive-options" class="station-options" role="listbox" hidden></div></div></div>
         <div class="field"><label for="date">乘车日期</label><input type="date" id="date" required></div>
         <div class="field"><label>出发时间</label><div class="actions" style="flex-wrap:nowrap"><input id="from_time" type="time" value="00:00" required aria-label="开始时间"><span>至</span><select id="to_time" aria-label="结束时间"><option value="24:00">24:00</option></select></div></div>
-        <div class="field wide"><span class="label">席别（可多选）</span><div class="seats" id="seat-options"></div></div>
-        <div class="field"><label for="train_numbers">指定车次（可留空）</label><input id="train_numbers" placeholder="G1,G3" autocomplete="off"></div>
-        <div class="field"><label for="except_train_numbers">排除车次（可留空）</label><input id="except_train_numbers" placeholder="G8,G12" autocomplete="off"></div>
+        <div class="field wide">
+          <span class="label">席别优先级（上方优先抢票）</span>
+          <div class="seat-picker">
+            <div class="seat-column"><strong>任务查询席别 / 抢票顺序</strong><div id="seat-selected" class="seat-list" aria-live="polite"></div></div>
+            <div class="seat-column"><strong>全部席别 · 点击添加 → 左侧</strong><div id="seat-available" class="seat-list"></div></div>
+          </div>
+        </div>
+        <div class="field"><span class="label">指定车次（可多选）</span><details id="include-trains" class="train-picker">
+          <summary id="include-trains-summary">全部车次（未指定）</summary>
+          <div class="train-popover"><input id="include-trains-search" type="search" placeholder="筛选车次" aria-label="查找指定车次" autocomplete="off"><div id="include-trains-options" class="train-options"></div></div>
+        </details></div>
+        <div class="field"><span class="label">排除车次（可多选）</span><details id="exclude-trains" class="train-picker">
+          <summary id="exclude-trains-summary">不排除任何车次</summary>
+          <div class="train-popover"><input id="exclude-trains-search" type="search" placeholder="筛选车次" aria-label="查找排除车次" autocomplete="off"><div id="exclude-trains-options" class="train-options"></div></div>
+        </details></div>
+        <div class="wide picker-help">车次来自相同出发站、到达站及日期的最新余票查询；如暂无查询记录，请先保存并启动任务，查询到车次后再编辑选择。指定与排除不可同时设置。</div>
       </div>
       <div id="error" class="message" role="alert"></div>
       <div class="form-actions"><button id="cancel" type="button">取消</button><button id="save" class="primary" type="submit">保存任务</button></div>
