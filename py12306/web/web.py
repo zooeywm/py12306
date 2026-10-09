@@ -41,6 +41,8 @@ class Web:
         self.session.register_blueprint(log)
         from py12306.web.handler.manage import manage
         self.session.register_blueprint(manage)
+        from py12306.web.handler.booking import booking
+        self.session.register_blueprint(booking)
 
     @classmethod
     def run(cls):
