@@ -1,6 +1,7 @@
 import base64
 import pickle
 import re
+import threading
 from os import path
 
 from py12306.cluster.cluster import Cluster
@@ -48,6 +49,14 @@ class UserJob:
 
     def __init__(self, info):
         self.cluster = Cluster()
+        self._qr_lock = threading.RLock()
+        self._qr_login_active = False
+        self._qr_start_requested = False
+        self._qr_refresh_requested = False
+        self.qr_image = None
+        self.qr_version = 0
+        self.qr_status = 'idle'
+        self.qr_message = '等待登录'
         self.init_data(info)
 
     def init_data(self, info):
@@ -113,14 +122,79 @@ class UserJob:
             return not self.cluster.get_user_cookie(self.key)
         return not path.exists(self.get_cookie_path())
 
+    def get_web_qr_status(self):
+        """Expose only QR metadata; the image itself uses an authenticated endpoint."""
+        with self._qr_lock:
+            return {
+                'status': self.qr_status,
+                'message': self.qr_message,
+                'version': self.qr_version,
+                'has_image': bool(self.qr_image and not self.is_ready),
+            }
+
+    def request_web_qr_login(self):
+        """Request a new QR without racing the existing heartbeat login thread."""
+        if self.type != 'qr':
+            raise ValueError('该账号未配置扫码登录模式')
+        with self._qr_lock:
+            if self.is_ready:
+                return '当前账号已登录'
+            if self._qr_login_active:
+                self._qr_refresh_requested = True
+                self.qr_message = '正在重新生成二维码'
+                return '正在重新生成二维码'
+            if self._qr_start_requested:
+                return '正在启动扫码登录'
+            self._qr_start_requested = True
+            self.qr_status = 'creating'
+            self.qr_message = '正在请求二维码'
+
+        def start_login():
+            try:
+                self.handle_login()
+            finally:
+                with self._qr_lock:
+                    self._qr_start_requested = False
+
+        try:
+            threading.Thread(target=start_login, daemon=True,
+                             name='py12306-web-qr-login').start()
+        except Exception:
+            with self._qr_lock:
+                self._qr_start_requested = False
+                self.qr_status = 'failed'
+                self.qr_message = '启动扫码登录失败'
+            raise
+        return '正在生成二维码'
+
     def handle_login(self, expire=False):
-        if expire: UserLog.print_user_expired()
-        self.is_ready = False
-        UserLog.print_start_login(user=self)
-        if self.type == 'qr':
-            return self.qr_login()
-        else:
+        if self.type != 'qr':
+            if expire:
+                UserLog.print_user_expired()
+            self.is_ready = False
+            UserLog.print_start_login(user=self)
             return self.login2()
+        with self._qr_lock:
+            if self._qr_login_active:
+                return False
+            self._qr_login_active = True
+            self.qr_status = 'creating'
+            self.qr_message = '正在请求二维码'
+            self.qr_image = None
+        self.is_ready = False
+        try:
+            if expire:
+                UserLog.print_user_expired()
+            UserLog.print_start_login(user=self)
+            return self.qr_login()
+        finally:
+            with self._qr_lock:
+                self._qr_login_active = False
+                if self.qr_status in ('creating', 'waiting', 'scanned', 'confirming'):
+                    self.qr_status = 'failed'
+                    self.qr_message = '登录未完成，请重新生成二维码'
+                if self.qr_status != 'logged_in':
+                    self.qr_image = None
 
     def login(self):
         """
@@ -160,52 +234,93 @@ class UserJob:
         return False
 
     def qr_login(self):
-        image_uuid, png_path = self.download_code()
-        last_time = time_int()
-        while True:
-            data = {
-                'RAIL_DEVICEID': self.session.cookies.get('RAIL_DEVICEID'),
-                'RAIL_EXPIRATION': self.session.cookies.get('RAIL_EXPIRATION'),
-                'uuid': image_uuid,
-                'appid': 'otn'
-            }
-            response = self.session.post(API_AUTH_QRCODE_CHECK.get('url'), data)
-            result = response.json()
-            try:
-                result_code = int(result.get('result_code'))
-            except Exception:
-                if time_int() - last_time > 300:
-                    last_time = time_int()
-                    image_uuid, png_path = self.download_code()
-                continue
-            if result_code == 0:
-                time.sleep(get_interval_num(self.sleep_interval))
-            elif result_code == 1:
-                UserLog.add_quick_log('请确认登录').flush()
-                time.sleep(get_interval_num(self.sleep_interval))
-            elif result_code == 2:
-                break
-            elif result_code == 3:
+        """Use the same 12306 session for browser and background QR login."""
+        image_uuid = None
+        png_path = None
+
+        def cleanup():
+            nonlocal png_path
+            if png_path:
                 try:
                     os.remove(png_path)
-                except Exception as e:
-                    UserLog.add_quick_log('无法删除文件: {}'.format(e)).flush()
-                image_uuid, png_path = self.download_code()
-            if time_int() - last_time > 300:
-                last_time = time_int()
-                image_uuid, png_path = self.download_code()
-        try:
-            os.remove(png_path)
-        except Exception as e:
-            UserLog.add_quick_log('无法删除文件: {}'.format(e)).flush()
+                except OSError:
+                    pass
+                png_path = None
 
-        self.session.get(API_USER_LOGIN['url'], allow_redirects=True)
-        new_tk = self.auth_uamtk()
-        user_name = self.auth_uamauthclient(new_tk)
-        self.update_user_info({'user_name': user_name})
-        self.session.get(API_USER_LOGIN['url'], allow_redirects=True)
-        self.login_did_success()
-        return True
+        try:
+            image_uuid, png_path = self.download_code()
+            last_time = time.monotonic()
+            while self.is_alive:
+                with self._qr_lock:
+                    refresh = self._qr_refresh_requested
+                    self._qr_refresh_requested = False
+                if refresh or time.monotonic() - last_time >= 240:
+                    cleanup()
+                    with self._qr_lock:
+                        self.qr_status = 'creating'
+                        self.qr_image = None
+                        self.qr_message = '正在更新二维码'
+                    image_uuid, png_path = self.download_code()
+                    last_time = time.monotonic()
+
+                data = {
+                    'RAIL_DEVICEID': self.session.cookies.get('RAIL_DEVICEID'),
+                    'RAIL_EXPIRATION': self.session.cookies.get('RAIL_EXPIRATION'),
+                    'uuid': image_uuid,
+                    'appid': 'otn'
+                }
+                response = self.session.post(API_AUTH_QRCODE_CHECK.get('url'), data, timeout=10)
+                result = response.json()
+                try:
+                    result_code = int(result.get('result_code'))
+                except (TypeError, ValueError):
+                    time.sleep(2)
+                    continue
+                if result_code == 0:
+                    time.sleep(1)
+                elif result_code == 1:
+                    with self._qr_lock:
+                        self.qr_status = 'scanned'
+                        self.qr_message = '已扫码，请在铁路 12306 App 内确认'
+                    time.sleep(1)
+                elif result_code == 2:
+                    with self._qr_lock:
+                        self.qr_status = 'confirming'
+                        self.qr_message = '12306 已确认，正在建立登录会话'
+                    break
+                elif result_code == 3:
+                    with self._qr_lock:
+                        self.qr_refresh_requested = True
+                        self.qr_status = 'expired'
+                        self.qr_message = '二维码已过期，正在自动刷新'
+                else:
+                    time.sleep(2)
+            else:
+                return False
+
+            self.session.get(API_USER_LOGIN['url'], allow_redirects=True)
+            new_tk = self.auth_uamtk()
+            if not new_tk:
+                raise RuntimeError('12306 未返回登录凭证')
+            user_name = self.auth_uamauthclient(new_tk)
+            if not user_name:
+                raise RuntimeError('12306 未确认用户信息')
+            self.update_user_info({'user_name': user_name})
+            self.session.get(API_USER_LOGIN['url'], allow_redirects=True)
+            self.login_did_success()
+            with self._qr_lock:
+                self.qr_status = 'logged_in'
+                self.qr_message = '12306 登录成功'
+                self.qr_image = None
+            return True
+        except Exception as exc:
+            with self._qr_lock:
+                self.qr_status = 'failed'
+                self.qr_message = '扫码登录失败，请重试'
+            UserLog.add_quick_log('12306 扫码登录失败: {}'.format(exc)).flush()
+            return False
+        finally:
+            cleanup()
 
     def login2(self):
         data = {
@@ -253,7 +368,15 @@ class UserJob:
             response = self.session.post(API_AUTH_QRCODE_BASE64_DOWNLOAD.get('url'), data={'appid': 'otn'})
             result = response.json()
             if result.get('result_code') == '0':
-                img_bytes = base64.b64decode(result.get('image'))
+                encoded_image = result.get('image')
+                img_bytes = base64.b64decode(encoded_image, validate=True)
+                if len(img_bytes) > 1024 * 1024 or not img_bytes.startswith(b'\x89PNG\r\n\x1a\n'):
+                    raise ValueError('二维码图片格式无效')
+                with self._qr_lock:
+                    self.qr_image = img_bytes
+                    self.qr_version += 1
+                    self.qr_status = 'waiting'
+                    self.qr_message = '请用铁路 12306 App 扫码登录'
                 try:
                     os.mkdir(Config().USER_DATA_DIR + '/qrcode')
                 except FileExistsError:
@@ -262,10 +385,11 @@ class UserJob:
                 with open(png_path, 'wb') as file:
                     file.write(img_bytes)
                     file.close()
-                if os.name == 'nt':
-                    os.startfile(png_path)
-                else:
-                    print_qrcode(png_path)
+                if not Config().WEB_ENABLE:
+                    if os.name == 'nt':
+                        os.startfile(png_path)
+                    else:
+                        print_qrcode(png_path)
                 UserLog.add_log(UserLog.MESSAGE_QRCODE_DOWNLOADED.format(png_path)).flush()
                 # Notification.send_email_with_qrcode(Config().EMAIL_RECEIVER, '你有新的登录二维码啦!', png_path)
                 self.retry_count = 0
