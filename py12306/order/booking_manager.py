@@ -241,8 +241,13 @@ class BookingManager:
             order_id = order.order_id if result else None
             if result and not order_id:
                 result = False
-            if result:
+                message = '12306 未返回订单号，不能确认购票成功'
+            elif result:
                 message = '12306 已返回订单号，请尽快在官方渠道支付'
+            else:
+                stage = getattr(order, 'failure_stage', '') or '未知阶段'
+                reason = getattr(order, 'failure_reason', '') or '12306 未确认下单成功'
+                message = '{}：{}；没有取得订单号'.format(stage, reason)
         except BookingError as e:
             message = str(e)
         except Exception:
@@ -252,7 +257,8 @@ class BookingManager:
                 order_id = order.order_id
                 message = '12306 已返回订单号，通知可能失败；请及时支付'
             else:
-                message = '订单处理异常，可能已提交；请先到 12306 未支付订单中核实'
+                stage = (getattr(order, 'failure_stage', '') if order else '') or '订单初始化'
+                message = '{}阶段发生异常，尚未取得订单号；请先核实 12306 官方订单'.format(stage)
         finally:
             with self.lock:
                 if result:
