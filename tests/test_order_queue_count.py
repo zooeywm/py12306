@@ -20,8 +20,10 @@ class FakeResponse:
 class FakeSession:
     def __init__(self, response):
         self.response = response
+        self.last_post_data = None
 
     def post(self, *args, **kwargs):
+        self.last_post_data = args[1] if len(args) > 1 else kwargs.get('data')
         return self.response
 
 
@@ -32,7 +34,8 @@ class QueueSupplyTests(unittest.TestCase):
         instance.session = FakeSession(response)
         instance.query_ins = SimpleNamespace(
             left_date='2026-10-23', current_order_seat='O',
-            current_seat=30, member_num_take=member_count)
+            current_seat=30, member_num_take=member_count,
+            ticket_info=['secret', '', 'TEST', 'D1036'])
         instance.user_ins = SimpleNamespace(
             global_repeat_submit_token='test-only',
             ticket_info_for_passenger_form={
@@ -57,6 +60,27 @@ class QueueSupplyTests(unittest.TestCase):
     def test_queue_valid_number(self):
         self.check({'status': True, 'data': {
             'ticket': '8,12', 'countT': '1', 'op_2': 'false'}}, True)
+
+    def test_queue_request_date_and_train_values(self):
+        order = self.make_order(FakeResponse({'status': True, 'data': {
+            'ticket': '8,12', 'countT': '0', 'op_2': 'false'}}))
+        with patch('py12306.order.order.OrderLog.add_quick_log'):
+            self.assertTrue(order.get_queue_count())
+        posted = order.session.last_post_data
+        self.assertEqual(posted['train_date'],
+                         'Fri Oct 23 2026 00:00:00 GMT+0800 (中国标准时间)')
+        self.assertEqual(posted['seatType'], 'O')
+        self.assertEqual(posted['stationTrainCode'], 'D1036')
+        self.assertEqual(posted['train_no'], 'TEST')
+
+    def test_queue_request_rejects_wrong_train(self):
+        order = self.make_order(FakeResponse({'status': True, 'data': {
+            'ticket': '8,12'}}))
+        order.user_ins.ticket_info_for_passenger_form['queryLeftTicketRequestDTO']['train_no'] = 'WRONG'
+        with patch('py12306.order.order.OrderLog.add_quick_log'):
+            self.assertFalse(order.get_queue_count())
+        self.assertIsNone(order.session.last_post_data)
+        self.assertIn('车次与余票查询结果不一致', order.failure_reason)
 
     def test_queue_valid_abundant(self):
         self.check({'status': True, 'data': {

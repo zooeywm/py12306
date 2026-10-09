@@ -6,6 +6,7 @@ from pyppeteer import launch
 
 from py12306.config import Config
 from py12306.helpers.api import *
+from py12306.helpers.queue_request import format_queue_train_date
 from py12306.helpers.func import *
 from py12306.helpers.notification import Notification
 from py12306.helpers.type import UserType, SeatType
@@ -395,8 +396,7 @@ class Order:
             form = self.user_ins.ticket_info_for_passenger_form
             dto = form['queryLeftTicketRequestDTO']
             data = {
-                'train_date': '{} 00:00:00 GMT+0800 (China Standard Time)'.format(
-                    datetime.datetime.strptime(self.query_ins.left_date, '%Y-%m-%d').strftime('%a %h %d %Y')),
+                'train_date': format_queue_train_date(self.query_ins.left_date),
                 'train_no': dto['train_no'],
                 'stationTrainCode': dto['station_train_code'],
                 'seatType': self.query_ins.current_order_seat,
@@ -408,7 +408,23 @@ class Order:
                 '_json_att': '',
                 'REPEAT_SUBMIT_TOKEN': self.user_ins.global_repeat_submit_token,
             }
-        except (KeyError, TypeError, ValueError, AttributeError):
+            # Reject incomplete or inconsistent requests before contacting
+            # 12306. Never expose any sensitive values in the diagnostic.
+            required = ('train_no', 'stationTrainCode', 'seatType',
+                        'fromStationTelecode', 'toStationTelecode',
+                        'leftTicket', 'purpose_codes', 'train_location',
+                        'REPEAT_SUBMIT_TOKEN')
+            if any(data.get(key) in (None, '') for key in required):
+                return fail('排队请求缺少车次、席别、站点或会话必需字段')
+            seat_type = str(data['seatType'])
+            if seat_type not in ('P', '9', 'M', 'O', '4', '3', '2', '1', 'F'):
+                return fail('排队请求的席别编码无效')
+            expected_train = self.query_ins.ticket_info[3]
+            expected_train_no = self.query_ins.ticket_info[2]
+            if (str(data['stationTrainCode']).upper() != expected_train.upper()
+                    or str(data['train_no']) != expected_train_no):
+                return fail('订单页面的车次与余票查询结果不一致，已停止下单')
+        except (KeyError, IndexError, TypeError, ValueError, AttributeError):
             return fail('订单页面缺少排队必需字段')
         try:
             response = self.session.post(API_GET_QUEUE_COUNT, data, timeout=10)
