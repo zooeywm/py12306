@@ -11,12 +11,14 @@ import re
 import stat
 import tempfile
 import threading
+import time
 from datetime import date, timedelta
 from functools import wraps
 
 from flask import Blueprint, jsonify, request, send_file
 
 from py12306.config import Config
+from py12306.helpers.api import LEFT_TICKETS
 from py12306.helpers.station import Station
 from py12306.helpers.type import SeatType
 from py12306.query.query import Query
@@ -25,6 +27,8 @@ manage = Blueprint('task_manage', __name__)
 _lock = threading.RLock()
 _TRAIN_RE = re.compile(r'^[A-Za-z0-9]{1,8}$')
 _TIME_RE = re.compile(r'^(?:[01][0-9]|2[0-3]):[0-5][0-9]$')
+_train_query_lock = threading.Lock()
+_train_query_cache = {}
 
 
 class BadTask(ValueError):
@@ -63,7 +67,7 @@ def _write_allowed():
 
 
 def _csv(value):
-    if not isinstance(value, str) or len(value) > 200:
+    if not isinstance(value, str) or len(value) > 320:
         raise BadTask('车次筛选格式无效')
     values = [s.strip().upper() for s in re.split(r'[,，\s]+', value) if s.strip()]
     if len(values) > 30 or any(not _TRAIN_RE.fullmatch(s) for s in values):
@@ -262,6 +266,81 @@ def availability():
         })
     response = jsonify(groups=groups)
     response.headers['Cache-Control'] = 'no-store'
+    return response
+
+
+@manage.route('/manage/api/train-options', methods=['GET'])
+@_auth_required
+def train_options():
+    """Read-only one-shot 12306 train discovery for unsaved task drafts."""
+    left = request.args.get('left', '').strip()
+    arrive = request.args.get('arrive', '').strip()
+    date_text = request.args.get('date', '').strip()
+    if not left or not arrive or left == arrive:
+        raise BadTask('请选择不同的出发站和到达站')
+    left_info = Station.get_station_by_name(left)
+    arrive_info = Station.get_station_by_name(arrive)
+    if not left_info or not arrive_info:
+        raise BadTask('车站不存在，请从列表选择')
+    try:
+        query_date = date.fromisoformat(date_text)
+    except ValueError:
+        raise BadTask('乘车日期格式错误')
+    if not date.today() <= query_date <= date.today() + timedelta(days=32):
+        raise BadTask('乘车日期必须在 32 天以内')
+    key = (date_text, left_info['key'], arrive_info['key'])
+    with _train_query_lock:
+        now = time.monotonic()
+        cached = _train_query_cache.get(key)
+        if cached and now - cached[0] < 60:
+            return jsonify(trains=cached[1], cached=True)
+        query = Query()
+        if not query.api_type:
+            raise BadTask('余票查询接口尚未就绪，请稍后重试')
+        url = LEFT_TICKETS['url'].format(
+            type=query.api_type, left_date=date_text,
+            left_station=key[1], arrive_station=key[2])
+        try:
+            response = query.session.get(url, timeout=6)
+            if response.status_code != 200:
+                raise BadTask('12306 查询失败，请稍后重试')
+            payload = response.json()
+            values = payload.get('data.result')
+            if not isinstance(values, list):
+                data = payload.get('data')
+                values = data.get('result') if isinstance(data, dict) else None
+            if not isinstance(values, list):
+                raise BadTask('12306 未返回有效车次数据')
+        except BadTask:
+            raise
+        except Exception:
+            raise BadTask('12306 车次查询暂不可用，请稍后重试')
+        names = {}
+        for row in values:
+            if not isinstance(row, str):
+                continue
+            fields = row.split('|')
+            if len(fields) <= 9:
+                continue
+            name = fields[3].strip().upper()
+            if _TRAIN_RE.fullmatch(name):
+                names[name] = {'train': name, 'departure': fields[8], 'arrival': fields[9]}
+        trains = sorted(names.values(), key=lambda x: (x['departure'], x['train']))
+        _train_query_cache[key] = (now, trains)
+        if len(_train_query_cache) > 80:
+            oldest = min(_train_query_cache, key=lambda k: _train_query_cache[k][0])
+            _train_query_cache.pop(oldest, None)
+    return jsonify(trains=trains, cached=False)
+
+
+@manage.route('/manage/api/stations/all', methods=['GET'])
+@_auth_required
+def all_stations():
+    """Return the locally cached 12306 station dataset once for searchable dropdowns."""
+    stations = [{'name': info['name'], 'pinyin': info.get('pinyin', '')}
+                for info in Station().stations if info.get('name')]
+    response = jsonify(stations=list({info['name']: info for info in stations}.values()))
+    response.headers['Cache-Control'] = 'private, max-age=3600'
     return response
 
 

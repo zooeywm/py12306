@@ -203,6 +203,10 @@ class SeatMonitor:
         route = (job.left_date, job.left_station_code, job.arrive_station_code)
         current = {}
         rows = {}
+        # Keep the complete queried train list even when this task filters
+        # train numbers or departure times. The editor must be able to add
+        # trains that are not currently included in the monitored rows.
+        train_options = {}
         seats = job.allow_seats or list(SeatType.dicts)
         now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
@@ -212,6 +216,13 @@ class SeatMonitor:
                                   job.INDEX_LEFT_TIME, job.INDEX_ARRIVE_TIME,
                                   job.INDEX_TICKET_NUM):
                 continue
+            train_code = fields[job.INDEX_TRAIN_NUMBER].strip().upper()
+            if train_code and re.fullmatch(r'[A-Z0-9]{1,8}', train_code):
+                train_options[train_code] = {
+                    'train': train_code,
+                    'departure': fields[job.INDEX_LEFT_TIME],
+                    'arrival': fields[job.INDEX_ARRIVE_TIME],
+                }
             job.ticket_info = fields
             if not job.is_trains_number_valid():
                 continue
@@ -304,6 +315,8 @@ class SeatMonitor:
                 'left': job.left_station,
                 'arrive': job.arrive_station,
                 'updated_at': now,
+                'train_options': sorted(train_options.values(),
+                                        key=lambda item: (item['departure'], item['train'])),
                 'rows_by_key': rows,
                 'changes': (events + history)[:50],
             }
