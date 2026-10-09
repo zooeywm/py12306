@@ -58,7 +58,18 @@
     .avail-only-toggle input:checked::after{transform:translateX(16px)}
     .avail-only-toggle input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 
-    @media(max-width:600px){.form-grid{grid-template-columns:1fr}.task-actions{width:100%;justify-content:flex-start}.top{align-items:flex-start}}
+    .task-card{padding:18px}.task-card .task{margin-bottom:0}
+    .task-availability{border-top:1px solid var(--border);margin-top:14px;padding-top:12px}
+    .task-availability>summary{cursor:pointer;display:list-item;font-size:14px;color:var(--accent);font-weight:600;list-style-position:inside}
+    .task-availability>summary:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+    .task-availability .route-title{margin-top:16px}
+    .task-availability-content{margin-top:10px}
+    .task-editor{border-top:1px solid var(--border);margin-top:14px;padding-top:16px}
+    .task-modal{width:min(760px,calc(100% - 24px));max-height:calc(100vh - 32px);overflow:auto;background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:14px;padding:22px}
+    .task-modal::backdrop{background:rgba(15,23,42,.62)}
+    .task-modal .task-editor{border:0;margin:0;padding:0}
+    #availability-status{font-size:12px;margin:8px 0 0}
+    @media(max-width:600px){.form-grid{grid-template-columns:1fr}.task-actions{width:100%;justify-content:flex-start}.top{align-items:flex-start}.task-modal{padding:16px}.task-card{padding:14px}}
   </style>
 </head>
 <body>
@@ -72,10 +83,9 @@
     <div class="actions"><button id="refresh" type="button">刷新</button><button class="primary" id="add" type="button">＋ 新增任务</button></div>
   </header>
   <p class="note">仅提供余票监控，不提交订单；所有新建或修改的任务均设为 monitor_only。页面仅限本机使用。</p>
-  <section id="tasks"><div class="card empty">正在加载任务…</div></section>
   <section class="card" aria-labelledby="avail-title">
     <div class="top" style="margin-bottom:6px;align-items:center">
-      <div><h2 id="avail-title" style="margin:0">实时余票</h2><p class="muted" style="font-size:13px">每 5 秒从本地缓存更新，不增加 12306 查询次数；票价为对应席别的参考价，以 12306 实际购买页面为准；「—」表示接口未提供；「有」不保证可购买指定张数。</p><p class="muted" style="font-size:12px">车型与服务标识来自已识别的官方查询字段；和谐号按 G/D/C 且未标记复兴号推定；宠物托运无可靠字段时不显示。</p></div>
+      <div><h2 id="avail-title" style="margin:0">实时余票筛选</h2><p class="muted" style="font-size:13px">每 5 秒从本地缓存更新，不增加 12306 查询次数；票价为对应席别的参考价，以 12306 实际购买页面为准；「—」表示接口未提供；「有」不保证可购买指定张数。</p><p class="muted" style="font-size:12px">车型与服务标识来自已识别的官方查询字段；和谐号按 G/D/C 且未标记复兴号推定；宠物托运无可靠字段时不显示。</p></div>
       <button id="availability-refresh" class="small" type="button">刷新余票</button>
     </div>
     <div class="availability-controls" aria-label="实时余票筛选条件">
@@ -112,9 +122,12 @@
         </div>
       </div>
     </div>
-    <div id="availability-data" aria-live="polite" aria-atomic="false" class="muted">等待查询数据…</div>
+    <p id="availability-status" class="muted" role="status">实时余票在下方各任务卡片中展开查看。</p>
   </section>
-  <section id="editor" class="card hide" aria-labelledby="editor-title">
+  <section id="tasks"><div class="card empty">正在加载任务…</div></section>
+  <dialog id="task-dialog" class="task-modal" aria-labelledby="editor-title"><div id="add-editor-host"></div></dialog>
+  <div id="editor-parking" hidden>
+  <section id="editor" class="task-editor hide" aria-labelledby="editor-title">
     <h2 id="editor-title">新增任务</h2>
     <form id="task-form">
       <div class="form-grid">
@@ -131,6 +144,7 @@
       <div class="form-actions"><button id="cancel" type="button">取消</button><button id="save" class="primary" type="submit">保存任务</button></div>
     </form>
   </section>
+  </div>
   <p class="muted" style="margin-top:18px;font-size:12px">任务配置保存在本地 env.py 的 QUERY_JOBS 中。网页登录使用 env.py 的 WEB_USER。</p>
 </main>
 <script>
@@ -139,6 +153,8 @@
   const $ = id => document.getElementById(id);
   const seatNames = ['二等座','一等座','商务座','特等座','软卧','硬卧','动卧','软座','硬座','无座'];
   let items = [], editing = null, canEdit = true, busy = false;
+  const expandedTasks = new Set();
+  const availabilityPanels = new Map();
   const today = new Date();
   // Local calendar day, not UTC (toISOString might shift the date).
   const isoDate = dt => [dt.getFullYear(),String(dt.getMonth()+1).padStart(2,'0'),String(dt.getDate()).padStart(2,'0')].join('-');
@@ -170,10 +186,19 @@
     const button=document.createElement('button');button.type='button';button.textContent=text;button.className='small '+cls;button.disabled=!canEdit || busy;button.addEventListener('click',handler);return button;
   }
   function render() {
-    const root=$('tasks');root.replaceChildren();$('add').disabled=!canEdit || busy;
-    if(!items.length){addText(root,'div','没有查询任务。点击“新增任务”开始配置。','card empty');return;}
+    const root=$('tasks'),editor=$('editor');
+    // Preserve the form and unsaved values when task cards are rebuilt.
+    if(editing!==null && !editor.classList.contains('hide'))$('editor-parking').append(editor);
+    root.replaceChildren();
+    availabilityPanels.clear();
+    $('add').disabled=!canEdit||busy;
+    if(!items.length){
+      addText(root,'div','没有查询任务。点击“新增任务”开始配置。','card empty');
+      return;
+    }
     for(const task of items){
-      const card=document.createElement('article');card.className='card task';
+      const card=document.createElement('article');card.className='card task-card';
+      const header=document.createElement('div');header.className='task';
       const body=document.createElement('div');body.className='task-body';
       const h=addText(body,'h3',task.job_name+' ','');
       addText(h,'span',task.enabled?'运行中':'已暂停','pill '+(task.enabled?'on':'off'));
@@ -181,15 +206,39 @@
       addText(body,'div',`${task.from_time}—${task.to_time}  ·  ${task.train_numbers?'指定：'+task.train_numbers:'全部车次'}${task.except_train_numbers?' · 排除：'+task.except_train_numbers:''}`,'meta');
       if(!task.monitor_only)addText(body,'div','旧任务：尚未标记 monitor_only，编辑或切换状态后将转换为纯监控任务','meta');
       const actions=document.createElement('div');actions.className='task-actions';
-      actions.append(actionButton('编辑',()=>openEditor(task)), actionButton(task.enabled?'暂停':'启动',()=>toggle(task)));
+      actions.append(actionButton(editing===task.index?'编辑中':'编辑',()=>openEditor(task)),
+                     actionButton(task.enabled?'暂停':'启动',()=>toggle(task)));
       actions.append(actionButton('删除',()=>remove(task),'danger'));
-      card.append(body,actions);root.append(card);
+      header.append(body,actions);card.append(header);
+      if(editing===task.index && !editor.classList.contains('hide'))card.append(editor);
+
+      const details=document.createElement('details');details.className='task-availability';
+      details.open=expandedTasks.has(task.job_name);
+      const title=document.createElement('summary');title.textContent='实时余票 · 等待更新';
+      const panel=document.createElement('div');panel.className='task-availability-content';
+      details.append(title,panel);
+      availabilityPanels.set(task.index,{task,details,title,panel});
+      details.addEventListener('toggle',()=>{
+        if(!details.isConnected)return;
+        if(details.open)expandedTasks.add(task.job_name);
+        else expandedTasks.delete(task.job_name);
+        renderTaskAvailability(task,details,title,panel);
+      });
+      card.append(details);root.append(card);
     }
+    renderAvailability(availabilityCache);
   }
   async function refresh(){
-    try{const data=await api('/manage/api/tasks');items=data.tasks;canEdit=data.can_edit;render();
-      if(!canEdit){$('editor').classList.add('hide');addText($('tasks'),'p','检测到 USER_ACCOUNTS 非空：网页编辑已被禁用。请先切换为纯监控模式。','note');}
-    } catch(e){$('tasks').replaceChildren();addText($('tasks'),'div','加载失败：'+e.message,'card empty');}
+    try{
+      const data=await api('/manage/api/tasks');
+      items=data.tasks;canEdit=data.can_edit;
+      if(!canEdit)closeEditor();
+      render();
+      if(!canEdit)addText($('tasks'),'p','当前配置禁止网页编辑任务。','note');
+    }catch(e){
+      $('tasks').replaceChildren();
+      addText($('tasks'),'div','加载失败：'+e.message,'card empty');
+    }
   }
   const tagTips={
     '静':'设有静音车厢','兑':'支持积分兑换车票','敬':'敬老优惠（以官方当日条件为准）',
@@ -307,47 +356,63 @@
     }else th.textContent=name;
     parent.append(th);
   }
-  function renderAvailability(groups){
-    availabilityCache=groups;
-    const root=$('availability-data'); root.replaceChildren();
-    if(!groups.length){addText(root,'p','暂无运行中的纯监控任务。请先启动任务。','muted');return;}
-    let shown=0;
-    for(const group of groups){
-      for(const route of group.routes){
-        shown++;
-        const title=addText(root,'h3',`${group.job_name} · ${route.date} ${route.left} → ${route.arrive}`,'route-title');
-        const rows=[...route.rows].filter(rowMatchesFilters).sort(compareRows);
-        const available=rows.filter(x=>x.available).length;
-        addText(root,'p',`更新于 ${route.updated_at} · 显示 ${rows.length}/${route.rows.length} 个车次/席别组合 · ${available} 个可售`,'muted');
-        const scroller=document.createElement('div');scroller.className='table-scroll';
-        const table=document.createElement('table');table.className='availability-table';
-        const head=document.createElement('thead'),header=document.createElement('tr');
-        [['车次',null],['车型',null],['服务标识',null],['出发','departure'],['到达',null],
-          ['总时间','duration'],['席别','seat'],['价格','price'],['余票','quantity'],['最近一次变化',null]]
-          .forEach(([name,key])=>sortHeader(header,name,key));
-        head.append(header);table.append(head);
-        const body=document.createElement('tbody');
-        rows.forEach(item=>{
-          const tr=document.createElement('tr');
-          addText(tr,'td',item.train);
-          renderTags(addText(tr,'td',''),item.model_tags,'model');
-          renderTags(addText(tr,'td',''),item.service_tags,'service');
-          for(const value of [item.departure,item.arrival,item.duration||'—',item.seat,item.price||'—'])addText(tr,'td',value);
-          addText(tr,'td',item.quantity,item.available?'avail-yes':'avail-no');
-          addText(tr,'td',item.change?`${item.change} · ${item.changed_at}`:'—');
-          body.append(tr);
-        });
-        if(!rows.length){const tr=document.createElement('tr'),td=addText(tr,'td',route.rows.length?'没有符合筛选条件的车次':'当前任务暂无返回车次','muted');td.colSpan=10;body.append(tr);}
-        table.append(body);scroller.append(table);root.append(scroller);
-        if(route.changes&&route.changes.length){
-          addText(root,'h4','最近状态变化','route-title');
-          const list=document.createElement('ol');list.className='changes';
-          route.changes.slice(0,10).forEach(change=>addText(list,'li',`${change.time} · ${change.train} ${change.seat}：${change.description}`));
-          root.append(list);
-        }
+  function renderTaskAvailability(task,details,title,root){
+    const group=availabilityCache.find(group=>group.job_name===task.job_name);
+    const routes=group?.routes||[];
+    const total=routes.reduce((n,route)=>n+(route.rows||[]).length,0);
+    const available=routes.reduce((n,route)=>n+(route.rows||[]).filter(row=>row.available).length,0);
+    title.textContent=group
+      ? `实时余票 · ${available} 个可售 / ${total} 个席别记录 · 点击${details.open?'收起':'展开'}`
+      : `实时余票 · ${task.enabled?'等待查询':'任务已暂停'} · 点击${details.open?'收起':'展开'}`;
+    if(!details.open){root.replaceChildren();return;}
+    root.replaceChildren();
+    if(!routes.length){
+      addText(root,'p',task.enabled?'等待首次查询结果…':'任务已暂停，暂无实时余票。','muted');
+      return;
+    }
+    for(const route of routes){
+      addText(root,'h3',`${task.job_name} · ${route.date} ${route.left} → ${route.arrive}`,'route-title');
+      const raw=route.rows||[];
+      const rows=raw.filter(rowMatchesFilters).sort(compareRows);
+      const visible=rows.filter(row=>row.available).length;
+      addText(root,'p',`更新于 ${route.updated_at} · 显示 ${rows.length}/${raw.length} 个车次/席别组合 · ${visible} 个可售`,'muted');
+      const scroller=document.createElement('div');scroller.className='table-scroll';
+      const table=document.createElement('table');table.className='availability-table';
+      const head=document.createElement('thead'),header=document.createElement('tr');
+      [['车次',null],['车型',null],['服务标识',null],['出发','departure'],['到达',null],
+        ['总时间','duration'],['席别','seat'],['价格','price'],['余票','quantity'],['最近一次变化',null]]
+        .forEach(([name,key])=>sortHeader(header,name,key));
+      head.append(header);table.append(head);
+      const body=document.createElement('tbody');
+      for(const item of rows){
+        const tr=document.createElement('tr');
+        addText(tr,'td',item.train);
+        renderTags(addText(tr,'td',''),item.model_tags,'model');
+        renderTags(addText(tr,'td',''),item.service_tags,'service');
+        for(const value of [item.departure,item.arrival,item.duration||'—',item.seat,item.price||'—'])addText(tr,'td',value);
+        addText(tr,'td',item.quantity,item.available?'avail-yes':'avail-no');
+        addText(tr,'td',item.change?`${item.change} · ${item.changed_at}`:'—');
+        body.append(tr);
+      }
+      if(!rows.length){
+        const tr=document.createElement('tr');
+        const td=addText(tr,'td',raw.length?'没有符合筛选条件的车次':'当前任务暂无返回车次','muted');
+        td.colSpan=10;body.append(tr);
+      }
+      table.append(body);scroller.append(table);root.append(scroller);
+      if(route.changes&&route.changes.length){
+        addText(root,'h4','最近状态变化','route-title');
+        const list=document.createElement('ol');list.className='changes';
+        route.changes.slice(0,10).forEach(change=>addText(list,'li',`${change.time} · ${change.train} ${change.seat}：${change.description}`));
+        root.append(list);
       }
     }
-    if(!shown)addText(root,'p','任务已启动，等待首次查询成功后显示余票。','muted');
+  }
+  function renderAvailability(groups){
+    availabilityCache=groups;
+    for(const {task,details,title,panel} of availabilityPanels.values()){
+      if(details.isConnected)renderTaskAvailability(task,details,title,panel);
+    }
   }
   filterIds.forEach(id=>{for(const event of ['input','change'])$(id).addEventListener(event,()=>renderAvailability(availabilityCache));});
   // The switch mirrors the existing availability dropdown rather than applying
@@ -369,12 +434,25 @@
   async function refreshAvailability(){
     if(availabilityFetching)return;
     availabilityFetching=true;
-    try{const data=await api('/manage/api/availability');renderAvailability(data.groups||[]);}
-    catch(e){$('availability-data').replaceChildren();addText($('availability-data'),'p','获取余票失败：'+e.message,'muted');}
-    finally{availabilityFetching=false;}
+    try{
+      const data=await api('/manage/api/availability');
+      $('availability-status').textContent='从本地缓存更新，筛选与排序适用于所有任务。';
+      renderAvailability(data.groups||[]);
+    }catch(e){
+      $('availability-status').textContent='获取余票失败：'+e.message;
+    }finally{availabilityFetching=false;}
+  }
+  function closeEditor(){
+    const editor=$('editor');
+    editor.classList.add('hide');
+    $('editor-parking').append(editor);
+    if($('task-dialog').open)$('task-dialog').close();
+    editing=null;
   }
   function openEditor(task=null){
-    editing=task?task.index:null; $('editor-title').textContent=task?'编辑任务':'新增任务';
+    closeEditor();
+    editing=task?task.index:null;
+    $('editor-title').textContent=task?'修改任务 · '+task.job_name:'新增任务';
     $('job_name').value=task?task.job_name:'';
     $('left').value=task?task.left:'';
     $('arrive').value=task?task.arrive:'';
@@ -384,22 +462,52 @@
     $('train_numbers').value=task?task.train_numbers:'';
     $('except_train_numbers').value=task?task.except_train_numbers:'';
     document.querySelectorAll('input[name="seat"]').forEach(box=>box.checked=task?task.seats.includes(box.value):box.value==='二等座');
-    $('error').textContent='';$('editor').classList.remove('hide');$('editor').scrollIntoView({behavior:'smooth',block:'start'});
+    $('error').textContent='';
+    $('editor').classList.remove('hide');
+    if(task){
+      render();
+      $('editor').scrollIntoView({behavior:'smooth',block:'nearest'});
+    }else{
+      $('add-editor-host').append($('editor'));
+      $('task-dialog').showModal();
+      $('job_name').focus();
+    }
   }
   function payload(){return {
     job_name:$('job_name').value,left:$('left').value,arrive:$('arrive').value,date:$('date').value,
     from_time:$('from_time').value,to_time:$('to_time').value,
     train_numbers:$('train_numbers').value,except_train_numbers:$('except_train_numbers').value,
-    seats:[...document.querySelectorAll('input[name="seat"]:checked')].map(e=>e.value),enabled: editing===null?true:items[editing].enabled
+    seats:[...document.querySelectorAll('input[name="seat"]:checked')].map(e=>e.value),
+    enabled:editing===null?true:items[editing].enabled
   };}
-  async function operation(url,method,body){busy=true;render();try{await api(url,method,body);$('editor').classList.add('hide');await refresh();await refreshAvailability();}catch(e){$('error').textContent=e.message;alert('操作失败：'+e.message);}finally{busy=false;render();}}
+  async function operation(url,method,body){
+    const previousName=editing!==null?items[editing]?.job_name:null;
+    busy=true;render();
+    try{
+      await api(url,method,body);
+      if(method==='PUT'&&previousName&&previousName!==body.job_name){
+        if(expandedTasks.delete(previousName))expandedTasks.add(body.job_name);
+      }
+      closeEditor();
+      await refresh();
+      await refreshAvailability();
+    }catch(e){
+      $('error').textContent=e.message;
+      alert('操作失败：'+e.message);
+    }finally{busy=false;render();}
+  }
   async function toggle(task){await operation('/manage/api/tasks/'+task.index+'/enabled','PATCH',{enabled:!task.enabled});}
   async function remove(task){if(confirm(`确认删除任务“${task.job_name}”？`))await operation('/manage/api/tasks/'+task.index,'DELETE',{});}
-  $('task-form').addEventListener('submit',async ev=>{ev.preventDefault();
+  $('task-form').addEventListener('submit',async ev=>{
+    ev.preventDefault();
     const url=editing===null?'/manage/api/tasks':'/manage/api/tasks/'+editing;
     await operation(url,editing===null?'POST':'PUT',payload());
   });
-  $('add').addEventListener('click',()=>openEditor());$('cancel').addEventListener('click',()=>$('editor').classList.add('hide'));
+  $('add').addEventListener('click',()=>openEditor());
+  $('cancel').addEventListener('click',()=>{closeEditor();render();});
+  $('task-dialog').addEventListener('close',()=>{
+    if(editing===null){$('editor').classList.add('hide');$('editor-parking').append($('editor'));}
+  });
   $('refresh').addEventListener('click',()=>{refresh();refreshAvailability();});
   $('availability-refresh').addEventListener('click',refreshAvailability);
   const suggestions=(id,target)=>{

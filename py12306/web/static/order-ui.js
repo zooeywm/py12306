@@ -52,9 +52,10 @@
     <div id="booking-message" class="message" role="status"></div>`;
   const banner = document.querySelector('main > p.note');
   if (banner) banner.textContent = '任务默认只监控；订单仅在手动确认或显式开启自动抢票后提交。不会自动支付。页面仅限本机使用。';
-  const avail = document.getElementById('availability-data');
+  // Tables are rendered inside each expandable task card.
+  const avail = document.getElementById('tasks');
   if (!avail) return;
-  avail.closest('section.card').insertAdjacentElement('afterend', card);
+  avail.insertAdjacentElement('afterend', card);
   const $ = id => document.getElementById(id);
   const styles = document.createElement('style');
   styles.textContent = '#booking-panel .seats label{cursor:pointer} #booking-panel .field{min-width:0} #booking-panel .booking-strong{color:var(--accent);font-weight:650}';
@@ -278,7 +279,8 @@
   // only new tables without interfering with column sorting and filters.
   const decorate = () => {
     for (const table of avail.querySelectorAll('table.availability-table')) {
-      const header = [...table.querySelectorAll('thead th')].map(th => th.textContent.trim());
+      const header = [...table.querySelectorAll('thead th')]
+        .map(th => th.textContent.trim().replace(/\s*[↕↑↓]\s*$/, ''));
       if (header.includes('预订')) continue;
       const trainIdx = header.indexOf('车次');
       const seatIdx = header.indexOf('席别');
@@ -290,8 +292,13 @@
       while (node && !(node.matches('h3.route-title'))) node = node.previousElementSibling;
       const match = node?.textContent.match(/^(.*) · (\d{4}-\d{2}-\d{2})\s/);
       table.querySelectorAll('tbody tr').forEach(tr => {
+        // A no-results row is one full-width cell, not a ticket row.
+        if (tr.cells.length !== header.length) {
+          if (tr.cells.length === 1) tr.cells[0].colSpan = header.length + 1;
+          return;
+        }
         const td = document.createElement('td');
-        if (match && tr.cells.length > Math.max(trainIdx, seatIdx, quantityIdx)) {
+        if (match) {
           const train = tr.cells[trainIdx].textContent.trim();
           const seat = tr.cells[seatIdx].textContent.trim();
           const qty = tr.cells[quantityIdx].textContent.trim();
