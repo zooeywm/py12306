@@ -1,4 +1,5 @@
 """Local-only booking controls; auth is identical to /manage."""
+from io import BytesIO
 from flask import Blueprint, jsonify, request, send_file
 
 from py12306.config import Config
@@ -46,7 +47,8 @@ def booking_ui():
 def booking_state():
     accounts = [
         {'key': str(user.key), 'label': str(user.user_name or user.key),
-         'ready': bool(user.is_ready), 'passengers': _contact_info(user)}
+         'ready': bool(user.is_ready), 'passengers': _contact_info(user),
+         'qr': user.get_web_qr_status() if user.type == 'qr' else None}
         for user in list(User().users)
     ]
     tasks = [
@@ -62,6 +64,39 @@ def booking_state():
                    booking_enabled=bool(Config().USER_ACCOUNTS))
 
 
+
+
+@booking.route('/manage/api/booking/qr/<account_key>/image', methods=['GET'])
+@_auth_required
+def qr_image(account_key):
+    """Serve QR bytes only to the local, authenticated task manager."""
+    user = User.get_user(account_key)
+    if not user or user.type != 'qr':
+        return jsonify(error='12306 扫码账号不存在'), 404
+    with user._qr_lock:
+        image = user.qr_image if not user.is_ready else None
+    if not image:
+        response = jsonify(error='二维码尚未生成或已失效')
+        response.status_code = 404
+        response.headers['Cache-Control'] = 'no-store'
+        return response
+    response = send_file(BytesIO(image), mimetype='image/png')
+    response.headers['Cache-Control'] = 'no-store, max-age=0'
+    response.headers['Pragma'] = 'no-cache'
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    return response
+
+
+@booking.route('/manage/api/booking/qr/<account_key>/refresh', methods=['POST'])
+@_auth_required
+def refresh_qr(account_key):
+    _write_allowed()
+    if request.get_json(silent=True) != {}:
+        raise BookingError('无效的扫码请求')
+    user = User.get_user(account_key)
+    if not user or user.type != 'qr':
+        raise BookingError('请选择已配置扫码登录的 12306 账号')
+    return jsonify(message=user.request_web_qr_login())
 
 
 @booking.route('/manage/api/booking/contacts', methods=['POST'])
