@@ -170,7 +170,10 @@ def update_auto_booking(index):
         task['monitor_only'] = True
         task['auto_order'] = rule
         current[index] = task
-        _save_jobs(current)
+        # Clear the restart-safe failure latch only after explicit user opt-in.
+        # Do this before persisting enabled=True: if latch update fails, no
+        # automatic booking rule should be enabled on the next launch.
         if enabled:
             BookingManager().resume_auto(str(account.key))
+        _save_jobs(current)
     return jsonify(auto_order=rule)
