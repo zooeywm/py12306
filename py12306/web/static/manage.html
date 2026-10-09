@@ -36,6 +36,27 @@
     .avail-yes{color:var(--accent);font-weight:650}.avail-no{color:var(--muted)}
     .changes{margin:14px 0 0;padding:0 0 0 18px;font-size:13px}
     .changes li{margin:5px 0}.route-title{margin:20px 0 5px;font-size:15px}
+    .tags{display:flex;align-items:center;gap:4px;flex-wrap:wrap}
+    .train-tag{display:inline-block;border:1px solid var(--border);border-radius:5px;padding:1px 5px;font-size:11px;line-height:1.5;background:var(--soft);color:var(--accent)}
+    .train-tag.service{border-color:var(--border);background:var(--card);color:var(--text)}
+    .availability-controls{margin-top:15px;border:1px solid var(--border);border-radius:10px;padding:12px;background:var(--bg)}
+    .availability-controls .controls-title{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:10px}
+    .filter-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px}
+    .filter-field{display:flex;flex-direction:column;gap:4px;min-width:0}
+    .filter-field label{font-size:12px;font-weight:600}
+    .filter-range{display:flex;align-items:center;gap:6px}
+    .filter-range input{min-width:0;flex:1;width:0}
+    .availability-controls input,.availability-controls select{padding:6px 8px;font-size:13px}
+    .sort-button{background:none;border:0;border-radius:4px;padding:0;color:inherit;font:inherit;font-weight:600;text-align:left;white-space:nowrap}
+    .sort-button:hover,.sort-button:focus-visible{color:var(--accent);text-decoration:underline}
+    .sort-button.is-active{color:var(--accent)}
+    .sort-arrow{margin-left:3px}
+    .avail-only-toggle{display:inline-flex;align-items:center;gap:7px;cursor:pointer;font-size:13px;white-space:nowrap}
+    .avail-only-toggle input{appearance:none;-webkit-appearance:none;width:36px;height:20px;margin:0;padding:0;border:1px solid var(--border);border-radius:999px;background:var(--border);position:relative;cursor:pointer}
+    .avail-only-toggle input::after{content:"";position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;background:var(--card);transition:transform .15s}
+    .avail-only-toggle input:checked{background:var(--accent);border-color:var(--accent)}
+    .avail-only-toggle input:checked::after{transform:translateX(16px)}
+    .avail-only-toggle input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 
     @media(max-width:600px){.form-grid{grid-template-columns:1fr}.task-actions{width:100%;justify-content:flex-start}.top{align-items:flex-start}}
   </style>
@@ -54,8 +75,42 @@
   <section id="tasks"><div class="card empty">正在加载任务…</div></section>
   <section class="card" aria-labelledby="avail-title">
     <div class="top" style="margin-bottom:6px;align-items:center">
-      <div><h2 id="avail-title" style="margin:0">实时余票</h2><p class="muted" style="font-size:13px">每 5 秒从本地缓存更新，不增加 12306 查询次数；「有」不保证可购买指定张数。</p></div>
+      <div><h2 id="avail-title" style="margin:0">实时余票</h2><p class="muted" style="font-size:13px">每 5 秒从本地缓存更新，不增加 12306 查询次数；票价为对应席别的参考价，以 12306 实际购买页面为准；「—」表示接口未提供；「有」不保证可购买指定张数。</p><p class="muted" style="font-size:12px">车型与服务标识来自已识别的官方查询字段；和谐号按 G/D/C 且未标记复兴号推定；宠物托运无可靠字段时不显示。</p></div>
       <button id="availability-refresh" class="small" type="button">刷新余票</button>
+    </div>
+    <div class="availability-controls" aria-label="实时余票筛选条件">
+      <div class="controls-title">
+        <div><strong>筛选车次</strong> <span class="muted" style="font-size:12px">点击表格中的列标题切换升序 / 降序；筛选条件对所有任务生效。</span></div>
+        <div class="actions">
+          <label class="avail-only-toggle" for="filter-only-available"><input id="filter-only-available" type="checkbox" role="switch">仅看有余票</label>
+          <button id="availability-clear" type="button" class="small">重置筛选及排序</button>
+        </div>
+      </div>
+      <div class="filter-grid">
+        <div class="filter-field">
+          <label for="filter-depart-from">出发时间</label>
+          <div class="filter-range"><input id="filter-depart-from" type="time" aria-label="最早出发时间"><span>至</span><input id="filter-depart-to" type="time" aria-label="最晚出发时间"></div>
+        </div>
+        <div class="filter-field">
+          <label for="filter-duration-min">总时间（分钟）</label>
+          <div class="filter-range"><input id="filter-duration-min" type="number" min="0" step="1" placeholder="最短" aria-label="最短历时分钟数"><span>至</span><input id="filter-duration-max" type="number" min="0" step="1" placeholder="最长" aria-label="最长历时分钟数"></div>
+        </div>
+        <div class="filter-field">
+          <label for="filter-seat">席别</label>
+          <select id="filter-seat" aria-label="筛选席别"><option value="">全部席别</option></select>
+        </div>
+        <div class="filter-field">
+          <label for="filter-price-min">价格（元）</label>
+          <div class="filter-range"><input id="filter-price-min" type="number" min="0" step="0.01" placeholder="最低" aria-label="最低票价"><span>至</span><input id="filter-price-max" type="number" min="0" step="0.01" placeholder="最高" aria-label="最高票价"></div>
+        </div>
+        <div class="filter-field">
+          <label for="filter-quantity-state">余票</label>
+          <div class="filter-range">
+            <select id="filter-quantity-state" aria-label="余票状态"><option value="">全部状态</option><option value="available">有票</option><option value="unavailable">无票或不可预订</option></select>
+            <input id="filter-quantity-min" type="number" min="1" step="1" placeholder="至少张数" aria-label="最少明确余票张数" title="只匹配明确显示数字张数的车次；“有”表示数量未知，不计入。">
+          </div>
+        </div>
+      </div>
     </div>
     <div id="availability-data" aria-live="polite" aria-atomic="false" class="muted">等待查询数据…</div>
   </section>
@@ -136,7 +191,124 @@
       if(!canEdit){$('editor').classList.add('hide');addText($('tasks'),'p','检测到 USER_ACCOUNTS 非空：网页编辑已被禁用。请先切换为纯监控模式。','note');}
     } catch(e){$('tasks').replaceChildren();addText($('tasks'),'div','加载失败：'+e.message,'card empty');}
   }
+  const tagTips={
+    '静':'设有静音车厢','兑':'支持积分兑换车票','敬':'敬老优惠（以官方当日条件为准）',
+    '铺':'支持在线选铺','复兴号':'复兴号动车组','和谐号':'按非复兴号的 G/D/C 动车组推定，并非接口提供的精确车型','智能动车组':'智能动车组',
+    '温馨动卧':'温馨动卧','动感号':'动感号'
+  };
+  function renderTags(cell,tags,cls){
+    const root=document.createElement('span');root.className='tags';
+    if(!Array.isArray(tags)||!tags.length){addText(root,'span','—','muted');}
+    else for(const name of tags){const tag=addText(root,'span',name,'train-tag '+cls);tag.title=tagTips[name]||name;}
+    cell.append(root);
+  }
+  // These controls live outside availability-data and are never recreated by
+  // polling, so typing a filter cannot lose focus every five seconds.
+  const filterIds=['filter-depart-from','filter-depart-to','filter-duration-min','filter-duration-max',
+    'filter-seat','filter-price-min','filter-price-max','filter-quantity-state','filter-quantity-min'];
+  const defaultSort={key:'departure',direction:'asc'};
+  let sortKey=defaultSort.key,sortDirection=defaultSort.direction;
+  let availabilityCache=[];
+  seatNames.forEach(name=>{const option=document.createElement('option');option.value=name;option.textContent=name;$('filter-seat').append(option);});
+
+  function durationMinutes(value){
+    const m=/^(\d+)小时(\d{1,2})分$/.exec(String(value||''));
+    if(!m||Number(m[2])>=60)return null;
+    return Number(m[1])*60+Number(m[2]);
+  }
+  function priceRange(value){
+    // The backend may display a range when one seat has multiple fare types.
+    const m=/^¥(\d+(?:\.\d{1,2})?)(?:[～~]¥?(\d+(?:\.\d{1,2})?))?$/.exec(String(value||''));
+    if(!m)return null;
+    return {min:Number(m[1]),max:Number(m[2]||m[1])};
+  }
+  function quantityNumber(item){
+    const value=String(item.quantity||'');
+    if(/^\d+$/.test(value))return Number(value);
+    if(!item.available&&['无','不可预订','0'].includes(value))return 0;
+    // “有” is available, but the exact quantity is unknown.
+    return null;
+  }
+  const hasInput=id=>$(id).value!=='';
+  function rowMatchesFilters(item){
+    if(hasInput('filter-depart-from') && (!item.departure||item.departure<$('filter-depart-from').value))return false;
+    if(hasInput('filter-depart-to') && (!item.departure||item.departure>$('filter-depart-to').value))return false;
+    const duration=durationMinutes(item.duration);
+    if(hasInput('filter-duration-min')&&(duration===null||duration<Number($('filter-duration-min').value)))return false;
+    if(hasInput('filter-duration-max')&&(duration===null||duration>Number($('filter-duration-max').value)))return false;
+    if(hasInput('filter-seat')&&item.seat!==$('filter-seat').value)return false;
+    const price=priceRange(item.price);
+    if(hasInput('filter-price-min')&&(price===null||price.max<Number($('filter-price-min').value)))return false;
+    if(hasInput('filter-price-max')&&(price===null||price.min>Number($('filter-price-max').value)))return false;
+    const state=$('filter-quantity-state').value;
+    if(state==='available'&&!item.available)return false;
+    if(state==='unavailable'&&item.available)return false;
+    if(hasInput('filter-quantity-min')){
+      const quantity=quantityNumber(item);
+      if(quantity===null||quantity<Number($('filter-quantity-min').value))return false;
+    }
+    return true;
+  }
+  function sortValue(item,key){
+    switch(key){
+      case 'departure':return /^\d{2}:\d{2}$/.test(item.departure||'')?Number(item.departure.slice(0,2))*60+Number(item.departure.slice(3,5)):null;
+      case 'duration':return durationMinutes(item.duration);
+      case 'seat':return item.seat||null;
+      case 'price':return priceRange(item.price)?.min??null;
+      case 'quantity':return quantityNumber(item);
+      default:return null;
+    }
+  }
+  function quantitySortRank(item){
+    const value=String(item.quantity??'').trim();
+    if(value==='有'||value==='充足')return [3,0];
+    if(/^\d+$/.test(value)){
+      const number=Number(value);
+      return number>0?[2,number]:[1,0];
+    }
+    if(['无','无票','不可预订','候补','--','*'].includes(value))return [1,0];
+    return [0,0]; // Unknown values always stay at the end.
+  }
+  function compareRows(a,b){
+    if(sortKey==='quantity'){
+      const [rankA,numA]=quantitySortRank(a),[rankB,numB]=quantitySortRank(b);
+      if(rankA===0&&rankB!==0)return 1;
+      if(rankB===0&&rankA!==0)return -1;
+      const diff=(rankA-rankB)||(numA-numB);
+      if(diff!==0)return sortDirection==='desc'?-diff:diff;
+    }else{
+      const va=sortValue(a,sortKey),vb=sortValue(b,sortKey);
+      // Unknown prices/durations stay last in both orders.
+      if(va===null&&vb!==null)return 1;
+      if(vb===null&&va!==null)return -1;
+      if(va!==null&&vb!==null){
+        const cmp=typeof va==='string'?va.localeCompare(vb,'zh-CN'):va-vb;
+        if(cmp!==0)return sortDirection==='asc'?cmp:-cmp;
+      }
+    }
+    return String(a.departure||'').localeCompare(String(b.departure||'')) ||
+      String(a.train||'').localeCompare(String(b.train||''),'zh-CN',{numeric:true}) ||
+      String(a.seat||'').localeCompare(String(b.seat||''),'zh-CN');
+  }
+  function sortHeader(parent,name,key){
+    const th=document.createElement('th');
+    if(key){
+      th.setAttribute('aria-sort',sortKey===key?(sortDirection==='asc'?'ascending':'descending'):'none');
+      const button=document.createElement('button');button.type='button';
+      button.className='sort-button'+(sortKey===key?' is-active':'');
+      button.title=`按${name}排序`;
+      button.textContent=name+(sortKey===key?(sortDirection==='asc'?' ↑':' ↓'):' ↕');
+      button.addEventListener('click',()=>{
+        if(sortKey===key)sortDirection=sortDirection==='asc'?'desc':'asc';
+        else{sortKey=key;sortDirection='asc';}
+        renderAvailability(availabilityCache);
+      });
+      th.append(button);
+    }else th.textContent=name;
+    parent.append(th);
+  }
   function renderAvailability(groups){
+    availabilityCache=groups;
     const root=$('availability-data'); root.replaceChildren();
     if(!groups.length){addText(root,'p','暂无运行中的纯监控任务。请先启动任务。','muted');return;}
     let shown=0;
@@ -144,23 +316,28 @@
       for(const route of group.routes){
         shown++;
         const title=addText(root,'h3',`${group.job_name} · ${route.date} ${route.left} → ${route.arrive}`,'route-title');
-        const rows=[...route.rows].sort((a,b)=>a.departure.localeCompare(b.departure)||a.train.localeCompare(b.train)||a.seat.localeCompare(b.seat));
+        const rows=[...route.rows].filter(rowMatchesFilters).sort(compareRows);
         const available=rows.filter(x=>x.available).length;
-        addText(root,'p',`更新于 ${route.updated_at} · 共 ${rows.length} 个车次/席别组合 · ${available} 个可售`,'muted');
+        addText(root,'p',`更新于 ${route.updated_at} · 显示 ${rows.length}/${route.rows.length} 个车次/席别组合 · ${available} 个可售`,'muted');
         const scroller=document.createElement('div');scroller.className='table-scroll';
         const table=document.createElement('table');table.className='availability-table';
         const head=document.createElement('thead'),header=document.createElement('tr');
-        ['车次','出发','到达','席别','余票','最近一次变化'].forEach(name=>addText(header,'th',name));
+        [['车次',null],['车型',null],['服务标识',null],['出发','departure'],['到达',null],
+          ['总时间','duration'],['席别','seat'],['价格','price'],['余票','quantity'],['最近一次变化',null]]
+          .forEach(([name,key])=>sortHeader(header,name,key));
         head.append(header);table.append(head);
         const body=document.createElement('tbody');
         rows.forEach(item=>{
           const tr=document.createElement('tr');
-          for(const value of [item.train,item.departure,item.arrival,item.seat])addText(tr,'td',value);
+          addText(tr,'td',item.train);
+          renderTags(addText(tr,'td',''),item.model_tags,'model');
+          renderTags(addText(tr,'td',''),item.service_tags,'service');
+          for(const value of [item.departure,item.arrival,item.duration||'—',item.seat,item.price||'—'])addText(tr,'td',value);
           addText(tr,'td',item.quantity,item.available?'avail-yes':'avail-no');
           addText(tr,'td',item.change?`${item.change} · ${item.changed_at}`:'—');
           body.append(tr);
         });
-        if(!rows.length){const tr=document.createElement('tr'),td=addText(tr,'td','当前筛选范围内暂无返回车次','muted');td.colSpan=6;body.append(tr);}
+        if(!rows.length){const tr=document.createElement('tr'),td=addText(tr,'td',route.rows.length?'没有符合筛选条件的车次':'当前任务暂无返回车次','muted');td.colSpan=10;body.append(tr);}
         table.append(body);scroller.append(table);root.append(scroller);
         if(route.changes&&route.changes.length){
           addText(root,'h4','最近状态变化','route-title');
@@ -172,6 +349,22 @@
     }
     if(!shown)addText(root,'p','任务已启动，等待首次查询成功后显示余票。','muted');
   }
+  filterIds.forEach(id=>{for(const event of ['input','change'])$(id).addEventListener(event,()=>renderAvailability(availabilityCache));});
+  // The switch mirrors the existing availability dropdown rather than applying
+  // a second potentially contradictory filter. Polling does not reset either.
+  $('filter-only-available').addEventListener('change',()=>{
+    $('filter-quantity-state').value=$('filter-only-available').checked?'available':'';
+    renderAvailability(availabilityCache);
+  });
+  $('filter-quantity-state').addEventListener('change',()=>{
+    $('filter-only-available').checked=$('filter-quantity-state').value==='available';
+  });
+  $('availability-clear').addEventListener('click',()=>{
+    $('filter-only-available').checked=false;
+    filterIds.forEach(id=>$(id).value='');
+    sortKey=defaultSort.key;sortDirection=defaultSort.direction;
+    renderAvailability(availabilityCache);
+  });
   let availabilityFetching=false;
   async function refreshAvailability(){
     if(availabilityFetching)return;
