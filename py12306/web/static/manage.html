@@ -58,7 +58,18 @@
     .avail-only-toggle input:checked::after{transform:translateX(16px)}
     .avail-only-toggle input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 
-    @media(max-width:600px){.form-grid{grid-template-columns:1fr}.task-actions{width:100%;justify-content:flex-start}.top{align-items:flex-start}}
+    .task-card{padding:18px}.task-card .task{margin-bottom:0}
+    .task-availability{border-top:1px solid var(--border);margin-top:14px;padding-top:12px}
+    .task-availability>summary{cursor:pointer;display:list-item;font-size:14px;color:var(--accent);font-weight:600;list-style-position:inside}
+    .task-availability>summary:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+    .task-availability .route-title{margin-top:16px}
+    .task-availability-content{margin-top:10px}
+    .task-editor{border-top:1px solid var(--border);margin-top:14px;padding-top:16px}
+    .task-modal{width:min(760px,calc(100% - 24px));max-height:calc(100vh - 32px);overflow:auto;background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:14px;padding:22px}
+    .task-modal::backdrop{background:rgba(15,23,42,.62)}
+    .task-modal .task-editor{border:0;margin:0;padding:0}
+    #availability-status{font-size:12px;margin:8px 0 0}
+    @media(max-width:600px){.form-grid{grid-template-columns:1fr}.task-actions{width:100%;justify-content:flex-start}.top{align-items:flex-start}.task-modal{padding:16px}.task-card{padding:14px}}
   </style>
 </head>
 <body>
@@ -72,10 +83,9 @@
     <div class="actions"><button id="refresh" type="button">刷新</button><button class="primary" id="add" type="button">＋ 新增任务</button></div>
   </header>
   <p class="note">仅提供余票监控，不提交订单；所有新建或修改的任务均设为 monitor_only。页面仅限本机使用。</p>
-  <section id="tasks"><div class="card empty">正在加载任务…</div></section>
   <section class="card" aria-labelledby="avail-title">
     <div class="top" style="margin-bottom:6px;align-items:center">
-      <div><h2 id="avail-title" style="margin:0">实时余票</h2><p class="muted" style="font-size:13px">每 5 秒从本地缓存更新，不增加 12306 查询次数；票价为对应席别的参考价，以 12306 实际购买页面为准；「—」表示接口未提供；「有」不保证可购买指定张数。</p><p class="muted" style="font-size:12px">车型与服务标识来自已识别的官方查询字段；和谐号按 G/D/C 且未标记复兴号推定；宠物托运无可靠字段时不显示。</p></div>
+      <div><h2 id="avail-title" style="margin:0">实时余票筛选</h2><p class="muted" style="font-size:13px">每 5 秒从本地缓存更新，不增加 12306 查询次数；票价为对应席别的参考价，以 12306 实际购买页面为准；「—」表示接口未提供；「有」不保证可购买指定张数。</p><p class="muted" style="font-size:12px">车型与服务标识来自已识别的官方查询字段；和谐号按 G/D/C 且未标记复兴号推定；宠物托运无可靠字段时不显示。</p></div>
       <button id="availability-refresh" class="small" type="button">刷新余票</button>
     </div>
     <div class="availability-controls" aria-label="实时余票筛选条件">
@@ -112,9 +122,12 @@
         </div>
       </div>
     </div>
-    <div id="availability-data" aria-live="polite" aria-atomic="false" class="muted">等待查询数据…</div>
+    <p id="availability-status" class="muted" role="status">实时余票在下方各任务卡片中展开查看。</p>
   </section>
-  <section id="editor" class="card hide" aria-labelledby="editor-title">
+  <section id="tasks"><div class="card empty">正在加载任务…</div></section>
+  <dialog id="task-dialog" class="task-modal" aria-labelledby="editor-title"><div id="add-editor-host"></div></dialog>
+  <div id="editor-parking" hidden>
+  <section id="editor" class="task-editor hide" aria-labelledby="editor-title">
     <h2 id="editor-title">新增任务</h2>
     <form id="task-form">
       <div class="form-grid">
@@ -131,6 +144,7 @@
       <div class="form-actions"><button id="cancel" type="button">取消</button><button id="save" class="primary" type="submit">保存任务</button></div>
     </form>
   </section>
+  </div>
   <p class="muted" style="margin-top:18px;font-size:12px">任务配置保存在本地 env.py 的 QUERY_JOBS 中。网页登录使用 env.py 的 WEB_USER。</p>
 </main>
 <script>
@@ -139,6 +153,8 @@
   const $ = id => document.getElementById(id);
   const seatNames = ['二等座','一等座','商务座','特等座','软卧','硬卧','动卧','软座','硬座','无座'];
   let items = [], editing = null, canEdit = true, busy = false;
+  const expandedTasks = new Set();
+  const availabilityPanels = new Map();
   const today = new Date();
   // Local calendar day, not UTC (toISOString might shift the date).
   const isoDate = dt => [dt.getFullYear(),String(dt.getMonth()+1).padStart(2,'0'),String(dt.getDate()).padStart(2,'0')].join('-');
