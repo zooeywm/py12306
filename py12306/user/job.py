@@ -770,13 +770,13 @@ class UserJob:
             return failed('请求超时或网络异常')
         if response.status_code != 200:
             return failed('HTTP 状态码 {}'.format(response.status_code))
-        html = response.text
+        html = response.text or ''
         if '系统忙，请稍后重试' in html:
             return failed('12306 系统繁忙')
 
         token = re.search(r"var\s+globalRepeatSubmitToken\s*=\s*['\"]([^'\"]+)['\"]", html)
-        form = re.search(r'var\s+ticketInfoForPassengerForm\s*=\s*(\{.+\})', html)
-        order = re.search(r'var\s+orderRequestDTO\s*=\s*(\{.+\})', html)
+        form = re.search(r'\bvar\s+ticketInfoForPassengerForm\s*=\s*', html)
+        order = re.search(r'\bvar\s+orderRequestDTO\s*=\s*', html)
         missing = []
         if not token:
             missing.append('提交令牌')
@@ -787,8 +787,13 @@ class UserJob:
         if missing:
             return failed('页面缺少{}（可能需要重新登录或 12306 页面已变化）'.format('、'.join(missing)))
         try:
-            ticket_info = json.loads(form.group(1).replace("'", '"'))
-            order_info = json.loads(order.group(1).replace("'", '"'))
+            # raw_decode stops at the end of each JSON object, even when more
+            # JavaScript variables follow. The old greedy \{.+\} swallowed them.
+            decoder = json.JSONDecoder()
+            ticket_info, _ = decoder.raw_decode(
+                html[form.end():].lstrip().replace("'", '"'))
+            order_info, _ = decoder.raw_decode(
+                html[order.end():].lstrip().replace("'", '"'))
             if not isinstance(ticket_info, dict) or not isinstance(order_info, dict):
                 return failed('订单页面表单结构异常')
         except (ValueError, TypeError):
