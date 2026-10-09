@@ -215,6 +215,7 @@
   let stations=[];
   let stationLoadError='';
   const stationNames=new Set();
+  let confirmedStations={left:'',arrive:''};
   const trainModes=['include','exclude'];
 
   function renderSeats(){
@@ -563,7 +564,8 @@
   };
   let stationActiveIndex={left:-1,arrive:-1};
   function chooseStation(id,name){
-    const previous=$(id).value;
+    const previous=confirmedStations[id];
+    confirmedStations[id]=name;
     $(id).value=name;
     closeStationOptions();
     if(previous!==name){selectedTrains={include:[],exclude:[]};refreshTrainPickers();}
@@ -716,6 +718,7 @@
     $('job_name').value=task?task.job_name:'';
     $('left').value=task?task.left:'';
     $('arrive').value=task?task.arrive:'';
+    confirmedStations={left:$('left').value,arrive:$('arrive').value};
     $('date').value=task?task.date:isoDate(today);
     $('from_time').value=task?task.from_time:'00:00';
     $('to_time').value=task?task.to_time:'24:00';
@@ -774,7 +777,9 @@
     if(selectedTrains.include.length&&selectedTrains.exclude.length){
       $('error').textContent='指定车次和排除车次不能同时选择';return;
     }
-    if(stations.length&&(!stationNames.has($('left').value.trim())||!stationNames.has($('arrive').value.trim()))){
+    if(stations.length&&(!stationNames.has($('left').value.trim())||!stationNames.has($('arrive').value.trim())
+        || confirmedStations.left!==$('left').value.trim()
+        || confirmedStations.arrive!==$('arrive').value.trim())){
       $('error').textContent='请从车站下拉列表选择有效的出发站和到达站';return;
     }
     const url=editing===null?'/manage/api/tasks':'/manage/api/tasks/'+editing;
