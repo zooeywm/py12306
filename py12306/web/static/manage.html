@@ -356,47 +356,63 @@
     }else th.textContent=name;
     parent.append(th);
   }
-  function renderAvailability(groups){
-    availabilityCache=groups;
-    const root=$('availability-data'); root.replaceChildren();
-    if(!groups.length){addText(root,'p','暂无运行中的纯监控任务。请先启动任务。','muted');return;}
-    let shown=0;
-    for(const group of groups){
-      for(const route of group.routes){
-        shown++;
-        const title=addText(root,'h3',`${group.job_name} · ${route.date} ${route.left} → ${route.arrive}`,'route-title');
-        const rows=[...route.rows].filter(rowMatchesFilters).sort(compareRows);
-        const available=rows.filter(x=>x.available).length;
-        addText(root,'p',`更新于 ${route.updated_at} · 显示 ${rows.length}/${route.rows.length} 个车次/席别组合 · ${available} 个可售`,'muted');
-        const scroller=document.createElement('div');scroller.className='table-scroll';
-        const table=document.createElement('table');table.className='availability-table';
-        const head=document.createElement('thead'),header=document.createElement('tr');
-        [['车次',null],['车型',null],['服务标识',null],['出发','departure'],['到达',null],
-          ['总时间','duration'],['席别','seat'],['价格','price'],['余票','quantity'],['最近一次变化',null]]
-          .forEach(([name,key])=>sortHeader(header,name,key));
-        head.append(header);table.append(head);
-        const body=document.createElement('tbody');
-        rows.forEach(item=>{
-          const tr=document.createElement('tr');
-          addText(tr,'td',item.train);
-          renderTags(addText(tr,'td',''),item.model_tags,'model');
-          renderTags(addText(tr,'td',''),item.service_tags,'service');
-          for(const value of [item.departure,item.arrival,item.duration||'—',item.seat,item.price||'—'])addText(tr,'td',value);
-          addText(tr,'td',item.quantity,item.available?'avail-yes':'avail-no');
-          addText(tr,'td',item.change?`${item.change} · ${item.changed_at}`:'—');
-          body.append(tr);
-        });
-        if(!rows.length){const tr=document.createElement('tr'),td=addText(tr,'td',route.rows.length?'没有符合筛选条件的车次':'当前任务暂无返回车次','muted');td.colSpan=10;body.append(tr);}
-        table.append(body);scroller.append(table);root.append(scroller);
-        if(route.changes&&route.changes.length){
-          addText(root,'h4','最近状态变化','route-title');
-          const list=document.createElement('ol');list.className='changes';
-          route.changes.slice(0,10).forEach(change=>addText(list,'li',`${change.time} · ${change.train} ${change.seat}：${change.description}`));
-          root.append(list);
-        }
+  function renderTaskAvailability(task,details,title,root){
+    const group=availabilityCache.find(group=>group.job_name===task.job_name);
+    const routes=group?.routes||[];
+    const total=routes.reduce((n,route)=>n+(route.rows||[]).length,0);
+    const available=routes.reduce((n,route)=>n+(route.rows||[]).filter(row=>row.available).length,0);
+    title.textContent=group
+      ? `实时余票 · ${available} 个可售 / ${total} 个席别记录 · 点击${details.open?'收起':'展开'}`
+      : `实时余票 · ${task.enabled?'等待查询':'任务已暂停'} · 点击${details.open?'收起':'展开'}`;
+    if(!details.open){root.replaceChildren();return;}
+    root.replaceChildren();
+    if(!routes.length){
+      addText(root,'p',task.enabled?'等待首次查询结果…':'任务已暂停，暂无实时余票。','muted');
+      return;
+    }
+    for(const route of routes){
+      addText(root,'h3',`${task.job_name} · ${route.date} ${route.left} → ${route.arrive}`,'route-title');
+      const raw=route.rows||[];
+      const rows=raw.filter(rowMatchesFilters).sort(compareRows);
+      const visible=rows.filter(row=>row.available).length;
+      addText(root,'p',`更新于 ${route.updated_at} · 显示 ${rows.length}/${raw.length} 个车次/席别组合 · ${visible} 个可售`,'muted');
+      const scroller=document.createElement('div');scroller.className='table-scroll';
+      const table=document.createElement('table');table.className='availability-table';
+      const head=document.createElement('thead'),header=document.createElement('tr');
+      [['车次',null],['车型',null],['服务标识',null],['出发','departure'],['到达',null],
+        ['总时间','duration'],['席别','seat'],['价格','price'],['余票','quantity'],['最近一次变化',null]]
+        .forEach(([name,key])=>sortHeader(header,name,key));
+      head.append(header);table.append(head);
+      const body=document.createElement('tbody');
+      for(const item of rows){
+        const tr=document.createElement('tr');
+        addText(tr,'td',item.train);
+        renderTags(addText(tr,'td',''),item.model_tags,'model');
+        renderTags(addText(tr,'td',''),item.service_tags,'service');
+        for(const value of [item.departure,item.arrival,item.duration||'—',item.seat,item.price||'—'])addText(tr,'td',value);
+        addText(tr,'td',item.quantity,item.available?'avail-yes':'avail-no');
+        addText(tr,'td',item.change?`${item.change} · ${item.changed_at}`:'—');
+        body.append(tr);
+      }
+      if(!rows.length){
+        const tr=document.createElement('tr');
+        const td=addText(tr,'td',raw.length?'没有符合筛选条件的车次':'当前任务暂无返回车次','muted');
+        td.colSpan=10;body.append(tr);
+      }
+      table.append(body);scroller.append(table);root.append(scroller);
+      if(route.changes&&route.changes.length){
+        addText(root,'h4','最近状态变化','route-title');
+        const list=document.createElement('ol');list.className='changes';
+        route.changes.slice(0,10).forEach(change=>addText(list,'li',`${change.time} · ${change.train} ${change.seat}：${change.description}`));
+        root.append(list);
       }
     }
-    if(!shown)addText(root,'p','任务已启动，等待首次查询成功后显示余票。','muted');
+  }
+  function renderAvailability(groups){
+    availabilityCache=groups;
+    for(const {task,details,title,panel} of availabilityPanels.values()){
+      if(details.isConnected)renderTaskAvailability(task,details,title,panel);
+    }
   }
   filterIds.forEach(id=>{for(const event of ['input','change'])$(id).addEventListener(event,()=>renderAvailability(availabilityCache));});
   // The switch mirrors the existing availability dropdown rather than applying
