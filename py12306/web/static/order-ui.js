@@ -44,7 +44,6 @@
     '.task-booking-controls .booking-members label{display:inline-flex;align-items:center;gap:5px;font-size:13px;cursor:pointer}',
     '.task-booking-controls .booking-members input{width:auto}',
     '.task-booking-controls .booking-auto-actions{display:flex;gap:8px;flex-wrap:wrap}',
-    '.task-booking-controls .booking-note{color:var(--muted);font-size:12px;margin-top:8px}',
     '#booking-account-card select{padding:7px 10px}'
   ].join('\n');
   document.head.append(styles);
@@ -122,9 +121,9 @@
       '<div class="label">乘车人（多选，最多 5 位）</div>',
       '<div class="booking-members"></div>',
       '<div class="booking-auto-actions">',
-      '<button type="button" class="primary booking-auto-start small">启用自动抢票</button>',
+      '<button type="button" class="primary booking-auto-start small">启动自动抢票</button>',
       '<button type="button" class="booking-auto-stop small">关闭自动抢票</button>',
-      '</div><p class="booking-note" role="status"></p>'
+      '</div>'
     ].join('');
     details.insertBefore(controls,details.querySelector('.task-availability-content'));
     controls.querySelector('.booking-auto-start').addEventListener('click',()=>saveAuto(details,true));
@@ -165,10 +164,10 @@
       }
     }
     const rule=task.auto_order||{},enabled=!!rule.enabled;
-    controls.querySelector('.booking-note').textContent=enabled
-      ? '自动抢票已开启'+(rule.account_key!==accountKey?'（绑定了其他账号）':'')
-      : '自动抢票未开启。勾选乘车人后，可在余票表格点击「预订」。';
-    controls.querySelector('.booking-auto-start').disabled=state.order?.state==='working'||!a?.ready||!a.passengers?.length;
+    const start=controls.querySelector('.booking-auto-start');
+    start.textContent=enabled?'自动抢票已开启':'启动自动抢票';
+    start.title=enabled&&rule.account_key!==accountKey?'该任务已绑定其他账号，须先关闭后才能切换':'';
+    start.disabled=enabled||state.order?.state==='working'||!a?.ready||!a.passengers?.length;
     controls.querySelector('.booking-auto-stop').disabled=!enabled;
   }
   function renderAllControls(force=false){
