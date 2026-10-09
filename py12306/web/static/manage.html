@@ -514,6 +514,8 @@
       const data=await api('/manage/api/availability');
       $('availability-status').textContent='从本地缓存更新，筛选与排序适用于所有任务。';
       renderAvailability(data.groups||[]);
+      // Do not rebuild the editor. Only update the train choices from cache.
+      if(!$('editor').classList.contains('hide'))refreshTrainPickers();
     }catch(e){
       $('availability-status').textContent='获取余票失败：'+e.message;
     }finally{availabilityFetching=false;}
@@ -546,8 +548,8 @@
       $(id).setAttribute('aria-expanded','false');
     }
   };
-  const stationMatches=id=>{
-    const query=$(id).value.trim().toLowerCase();
+  const stationMatches=(id,showAll=false)=>{
+    const query=showAll?'':$(id).value.trim().toLowerCase();
     return stations.filter(item=>!query||item.name.toLowerCase().includes(query)||
       String(item.pinyin||'').toLowerCase().includes(query));
   };
@@ -559,10 +561,10 @@
     if(previous!==name){selectedTrains={include:[],exclude:[]};refreshTrainPickers();}
     $(id).focus();
   }
-  function renderStationOptions(id){
+  function renderStationOptions(id,showAll=false){
     const root=$(id+'-options');
     root.replaceChildren();
-    const matches=stationMatches(id);
+    const matches=stationMatches(id,showAll);
     const maxOptions=160;
     stationActiveIndex[id]=-1;
     for(const entry of matches.slice(0,maxOptions)){
@@ -586,7 +588,7 @@
   const stationInput=id=>{
     const input=$(id),list=$(id+'-options');
     input.addEventListener('focus',()=>{closeStationOptions();renderStationOptions(id);});
-    input.addEventListener('click',()=>{closeStationOptions();renderStationOptions(id);});
+    input.addEventListener('click',()=>{closeStationOptions();renderStationOptions(id,true);});
     input.addEventListener('input',()=>renderStationOptions(id));
     input.addEventListener('keydown',event=>{
       if(event.key==='Escape'){
@@ -688,9 +690,18 @@
     $('date').value=task?task.date:isoDate(today);
     $('from_time').value=task?task.from_time:'00:00';
     $('to_time').value=task?task.to_time:'24:00';
-    $('train_numbers').value=task?task.train_numbers:'';
-    $('except_train_numbers').value=task?task.except_train_numbers:'';
-    document.querySelectorAll('input[name="seat"]').forEach(box=>box.checked=task?task.seats.includes(box.value):box.value==='二等座');
+    selectedSeats=task?[...(task.seats||[])]:['二等座'];
+    selectedTrains={
+      include:task?String(task.train_numbers||'').split(',').filter(Boolean):[],
+      exclude:task?String(task.except_train_numbers||'').split(',').filter(Boolean):[],
+    };
+    for(const mode of trainModes){
+      $(mode+'-trains').open=false;
+      $(mode+'-trains-search').value='';
+    }
+    closeStationOptions();
+    renderSeats();
+    refreshTrainPickers();
     $('error').textContent='';
     $('editor').classList.remove('hide');
     if(task){
@@ -705,8 +716,8 @@
   function payload(){return {
     job_name:$('job_name').value,left:$('left').value,arrive:$('arrive').value,date:$('date').value,
     from_time:$('from_time').value,to_time:$('to_time').value,
-    train_numbers:$('train_numbers').value,except_train_numbers:$('except_train_numbers').value,
-    seats:[...document.querySelectorAll('input[name="seat"]:checked')].map(e=>e.value),
+    train_numbers:selectedTrains.include.join(','),except_train_numbers:selectedTrains.exclude.join(','),
+    seats:[...selectedSeats],
     enabled:editing===null?true:items[editing].enabled
   };}
   async function operation(url,method,body){
@@ -729,6 +740,13 @@
   async function remove(task){if(confirm(`确认删除任务“${task.job_name}”？`))await operation('/manage/api/tasks/'+task.index,'DELETE',{});}
   $('task-form').addEventListener('submit',async ev=>{
     ev.preventDefault();
+    if(!selectedSeats.length){$('error').textContent='至少选择一个席别';return;}
+    if(selectedTrains.include.length&&selectedTrains.exclude.length){
+      $('error').textContent='指定车次和排除车次不能同时选择';return;
+    }
+    if(stations.length&&(!stationNames.has($('left').value.trim())||!stationNames.has($('arrive').value.trim()))){
+      $('error').textContent='请从车站下拉列表选择有效的出发站和到达站';return;
+    }
     const url=editing===null?'/manage/api/tasks':'/manage/api/tasks/'+editing;
     await operation(url,editing===null?'POST':'PUT',payload());
   });
