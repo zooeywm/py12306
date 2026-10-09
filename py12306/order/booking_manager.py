@@ -257,7 +257,8 @@ class BookingManager:
                 order_id = order.order_id
                 message = '12306 已返回订单号，通知可能失败；请及时支付'
             else:
-                message = '订单处理异常，可能已提交；请先到 12306 未支付订单中核实'
+                stage = (getattr(order, 'failure_stage', '') if order else '') or '订单初始化'
+                message = '{}阶段发生异常，尚未取得订单号；请先核实 12306 官方订单'.format(stage)
         finally:
             with self.lock:
                 if result:
