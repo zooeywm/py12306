@@ -223,6 +223,31 @@ class BookingManager:
             raise BookingError('无法启动下单线程')
         return data
 
+    @staticmethod
+    def _persist_auto_pause(account_key):
+        """Disable configured automatic orders for this account across restarts.
+
+        Updating env.py is guarded by the same lock used by Web task changes.
+        A failed write is surfaced in Web status; in-memory protection remains.
+        """
+        try:
+            from py12306.web.handler.manage import _lock, _save_jobs
+            with _lock:
+                current = list(Config().QUERY_JOBS)
+                changed = False
+                for idx, task in enumerate(current):
+                    rule = task.get('auto_order') or {}
+                    if rule.get('enabled') and str(rule.get('account_key')) == str(account_key):
+                        updated = dict(task)
+                        updated['auto_order'] = dict(rule, enabled=False)
+                        current[idx] = updated
+                        changed = True
+                if changed:
+                    _save_jobs(current)
+            return True
+        except (OSError, ValueError, RuntimeError, ImportError):
+            return False
+
     def _worker(self, job, user, account_key):
         result = False
         order = None
@@ -275,6 +300,10 @@ class BookingManager:
                 if order_id:
                     self.status['order_id'] = str(order_id)
                 self.inflight = False
+            if not result and not self._persist_auto_pause(account_key):
+                with self.lock:
+                    self.status['message'] += (
+                        '；自动暂停未能写入 env.py，重启前请在 Web 手动关闭自动抢票')
 
     def resume_auto(self, account_key):
         with self.lock:
