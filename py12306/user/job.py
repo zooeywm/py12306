@@ -756,29 +756,48 @@ class UserJob:
         return results
 
     def request_init_dc_page(self):
-        """
-        请求下单页面 拿到 token
-        :return:
-        """
-        data = {'_json_att': ''}
-        response = self.session.post(API_INITDC_URL, data)
-        html = response.text
-        token = re.search(r'var globalRepeatSubmitToken = \'(.+?)\'', html)
-        form = re.search(r'var ticketInfoForPassengerForm *= *(\{.+\})', html)
-        order = re.search(r'var orderRequestDTO *= *(\{.+\})', html)
-        # 系统忙，请稍后重试
-        if html.find('系统忙，请稍后重试') != -1:
-            OrderLog.add_quick_log(OrderLog.MESSAGE_REQUEST_INIT_DC_PAGE_FAIL).flush()  # 重试无用，直接跳过
-            return False, False, html
-        try:
-            self.global_repeat_submit_token = token.groups()[0]
-            self.ticket_info_for_passenger_form = json.loads(form.groups()[0].replace("'", '"'))
-            self.order_request_dto = json.loads(order.groups()[0].replace("'", '"'))
-        except Exception:
-            return False, False, html  # TODO Error
+        """Initialize the 12306 order page without exposing tokens or private data."""
+        self.order_page_error = ''
 
+        def failed(message):
+            self.order_page_error = message
+            OrderLog.add_quick_log('订单页面初始化失败：' + message).flush()
+            return False, False, ''
+
+        try:
+            response = self.session.post(API_INITDC_URL, {'_json_att': ''}, timeout=12)
+        except Exception:
+            return failed('请求超时或网络异常')
+        if response.status_code != 200:
+            return failed('HTTP 状态码 {}'.format(response.status_code))
+        html = response.text
+        if '系统忙，请稍后重试' in html:
+            return failed('12306 系统繁忙')
+
+        token = re.search(r"var\s+globalRepeatSubmitToken\s*=\s*['\"]([^'\"]+)['\"]", html)
+        form = re.search(r'var\s+ticketInfoForPassengerForm\s*=\s*(\{.+\})', html)
+        order = re.search(r'var\s+orderRequestDTO\s*=\s*(\{.+\})', html)
+        missing = []
+        if not token:
+            missing.append('提交令牌')
+        if not form:
+            missing.append('乘车人表单')
+        if not order:
+            missing.append('订单请求信息')
+        if missing:
+            return failed('页面缺少{}（可能需要重新登录或 12306 页面已变化）'.format('、'.join(missing)))
+        try:
+            ticket_info = json.loads(form.group(1).replace("'", '"'))
+            order_info = json.loads(order.group(1).replace("'", '"'))
+            if not isinstance(ticket_info, dict) or not isinstance(order_info, dict):
+                return failed('订单页面表单结构异常')
+        except (ValueError, TypeError):
+            return failed('订单页面表单数据无法解析（可能是 12306 页面格式已变化）')
+
+        self.global_repeat_submit_token = token.group(1)
+        self.ticket_info_for_passenger_form = ticket_info
+        self.order_request_dto = order_info
         slide_val = re.search(r"var if_check_slide_passcode.*='(\d?)'", html)
-        is_slide = False
-        if slide_val:
-            is_slide = int(slide_val[1]) == 1
+        is_slide = bool(slide_val and slide_val.group(1) == '1')
+        OrderLog.add_quick_log('订单页面初始化成功，正在校验乘车人').flush()
         return True, is_slide, html
