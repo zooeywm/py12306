@@ -481,12 +481,12 @@
     enabled:editing===null?true:items[editing].enabled
   };}
   async function operation(url,method,body){
+    const previousName=editing!==null?items[editing]?.job_name:null;
     busy=true;render();
     try{
       await api(url,method,body);
-      if(editing!==null&&method==='PUT'&&body.job_name!==items[editing]?.job_name){
-        const oldName=items[editing]?.job_name;
-        if(expandedTasks.delete(oldName))expandedTasks.add(body.job_name);
+      if(method==='PUT'&&previousName&&previousName!==body.job_name){
+        if(expandedTasks.delete(previousName))expandedTasks.add(body.job_name);
       }
       closeEditor();
       await refresh();
