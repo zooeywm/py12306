@@ -23,6 +23,15 @@
   card.id = 'booking-panel';
   card.innerHTML = `
     <h2>下单控制</h2>
+    <div id="booking-qr-panel" style="border:1px solid var(--border);border-radius:9px;padding:14px;margin:12px 0 18px">
+      <h3 style="font-size:15px;margin:0 0 10px">12306 扫码登录</h3>
+      <div class="actions">
+        <select id="booking-qr-account" aria-label="扫码登录账号" style="width:auto;min-width:180px;max-width:100%"></select>
+        <button id="booking-qr-refresh" type="button" class="small">获取 / 刷新二维码</button>
+      </div>
+      <p id="booking-qr-status" class="muted" role="status" style="font-size:13px;margin:10px 0"></p>
+      <img id="booking-qr-image" alt="12306 登录二维码，请使用铁路 12306 App 扫描" style="display:none;width:220px;max-width:100%;height:auto;background:#fff;border-radius:8px;padding:8px">
+    </div>
     <p class="muted" style="font-size:13px">手动：点击余票列表的「预订」。自动：选择任务并明确启用。不会自动支付。</p>
     <p id="booking-login" class="note"></p><button type="button" class="small" id="booking-load-contacts">加载常用联系人</button>
     <div id="booking-status" role="status" class="muted" style="font-size:13px;padding:8px 0"></div>
@@ -60,6 +69,50 @@
     return el;
   };
   const account = key => state.accounts.find(item => item.key === key);
+  const renderQr = () => {
+    const key = $('booking-qr-account').value;
+    const a = account(key);
+    const qr = a?.qr;
+    const img = $('booking-qr-image');
+    const clearImage = () => {
+      img.style.display = 'none';
+      img.removeAttribute('src');
+      delete img.dataset.qr;
+    };
+    $('booking-qr-refresh').disabled = !a || !qr || a.ready;
+    if (!a) {
+      $('booking-qr-status').textContent = '请先在 env.py 配置扫码账号 USER_ACCOUNTS，然后在此选择账号';
+      clearImage();
+      return;
+    }
+    if (!qr) {
+      $('booking-qr-status').textContent = '此账号不是扫码登录模式，请将 type 配置为 qr';
+      clearImage();
+      return;
+    }
+    if (a.ready) {
+      $('booking-qr-status').textContent = '已登录 12306，可加载常用联系人并下单';
+      clearImage();
+      return;
+    }
+    const labels = {
+      idle:'等待生成二维码', creating:'二维码生成中', waiting:'等待扫码',
+      scanned:'已扫码，等待 App 确认', confirming:'正在验证登录',
+      expired:'二维码过期，正在刷新', failed:'登录失败，可重新生成'
+    };
+    $('booking-qr-status').textContent = qr.message || labels[qr.status] || '等待登录';
+    if (qr.has_image) {
+      const url = '/manage/api/booking/qr/' + encodeURIComponent(key) +
+                  '/image?v=' + encodeURIComponent(qr.version);
+      if (img.dataset.qr !== url) {
+        img.src = url;
+        img.dataset.qr = url;
+      }
+      img.style.display = 'block';
+    } else {
+      clearImage();
+    }
+  };
   const selectedMembers = id => [...$(id).querySelectorAll('input:checked')].map(el => el.value);
   const chooseAccount = (id, previous) => {
     const select = $(id);
@@ -113,6 +166,12 @@
         lastListSignature = signature;
         const prevManual = $('booking-account').value;
         const prevTask = $('booking-task').value;
+        const prevLogin = $('booking-qr-account').value;
+        chooseAccount('booking-qr-account', prevLogin);
+        if (!$('booking-qr-account').value && state.accounts.length) {
+          const qrAccount = state.accounts.find(a => a.qr);
+          $('booking-qr-account').value = (qrAccount || state.accounts[0]).key;
+        }
         chooseAccount('booking-account', prevManual);
         updateContacts('booking-contacts', $('booking-account').value, selectedMembers('booking-contacts'));
         const taskSelect = $('booking-task');
@@ -122,9 +181,25 @@
         if (!taskSelect.value && state.tasks.length) taskSelect.value = String(state.tasks[0].index);
         loadAuto();
       }
+      renderQr();
     } catch (e) { $('booking-message').textContent = '获取下单状态失败：' + e.message; }
   };
 
+  $('booking-qr-account').addEventListener('change', renderQr);
+  $('booking-qr-refresh').addEventListener('click', async () => {
+    const key = $('booking-qr-account').value;
+    if (!key) return;
+    $('booking-qr-refresh').disabled = true;
+    try {
+      const result = await api('/manage/api/booking/qr/' + encodeURIComponent(key) + '/refresh', 'POST', {});
+      $('booking-qr-status').textContent = result.message || '正在生成二维码';
+      await refreshState();
+    } catch (e) {
+      $('booking-qr-status').textContent = '二维码刷新失败：' + e.message;
+    } finally {
+      renderQr();
+    }
+  });
   $('booking-load-contacts').addEventListener('click', async () => {
     const accountKey = ($('booking-manual').style.display === 'none'
       ? $('booking-auto-account').value : $('booking-account').value)
