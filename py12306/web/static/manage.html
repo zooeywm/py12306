@@ -554,7 +554,11 @@
   };
   const stationMatches=(id,showAll=false)=>{
     const query=showAll?'':$(id).value.trim().toLowerCase();
-    return stations.filter(item=>!query||item.name.toLowerCase().includes(query)||
+    if(!query)return stations;
+    const prefix=stations.filter(item=>item.name.toLowerCase().startsWith(query)||
+      String(item.pinyin||'').toLowerCase().startsWith(query));
+    if(prefix.length)return prefix;
+    return stations.filter(item=>item.name.toLowerCase().includes(query)||
       String(item.pinyin||'').toLowerCase().includes(query));
   };
   let stationActiveIndex={left:-1,arrive:-1};
@@ -569,9 +573,8 @@
     const root=$(id+'-options');
     root.replaceChildren();
     const matches=stationMatches(id,showAll);
-    const maxOptions=160;
     stationActiveIndex[id]=-1;
-    for(const entry of matches.slice(0,maxOptions)){
+    for(const entry of matches){
       const button=document.createElement('button');
       button.type='button';button.className='station-option';
       button.setAttribute('role','option');
@@ -584,8 +587,6 @@
     }
     if(!stations.length)addText(root,'div',stationLoadError||'正在加载全部 12306 车站…','station-hint');
     else if(!matches.length)addText(root,'div','没有匹配的车站，请修改关键词','station-hint');
-    else if(matches.length>maxOptions)
-      addText(root,'div',`找到 ${matches.length} 个车站，先显示前 ${maxOptions} 个；继续输入可以缩小范围`,'station-hint');
     root.hidden=false;
     $(id).setAttribute('aria-expanded','true');
   }
