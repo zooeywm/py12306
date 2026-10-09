@@ -45,11 +45,15 @@ def booking_ui():
 @booking.route('/manage/api/booking/state')
 @_auth_required
 def booking_state():
+    users = list(User().users)
+    for user in users:
+        if user.is_ready:
+            user.ensure_web_contacts()
     accounts = [
         {'key': str(user.key), 'label': str(user.user_name or user.key),
          'ready': bool(user.is_ready), 'passengers': _contact_info(user),
          'qr': user.get_web_qr_status() if user.type == 'qr' else None}
-        for user in list(User().users)
+        for user in users
     ]
     tasks = [
         {'index': idx, 'job_name': task.get('job_name', ''),
