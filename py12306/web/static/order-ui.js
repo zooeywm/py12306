@@ -186,7 +186,7 @@
         const prevManual = $('booking-account').value;
         const prevTask = $('booking-task').value;
         const prevLogin = $('booking-qr-account').value;
-        chooseAccount('booking-qr-account', prevLogin, state.accounts.find(a => a.qr)?.key);
+        chooseAccount('booking-qr-account', prevLogin, preferredAccountKey || state.accounts.find(a => a.qr)?.key);
         chooseAccount('booking-account', prevManual);
         updateContacts('booking-contacts', $('booking-account').value, selectedMembers('booking-contacts'));
         const taskSelect = $('booking-task');
@@ -194,7 +194,7 @@
         for (const t of state.tasks) taskSelect.append(option(t.index, t.job_name + ' · ' + t.date));
         taskSelect.value = state.tasks.some(t => String(t.index) === prevTask) ? prevTask : '';
         if (!taskSelect.value && state.tasks.length) taskSelect.value = String(state.tasks[0].index);
-        loadAuto();
+        loadAuto(taskSelect.value !== prevTask);
       }
       renderQr();
     } catch (e) { $('booking-message').textContent = '获取下单状态失败：' + e.message; }
@@ -228,16 +228,13 @@
   $('booking-task').addEventListener('change', () => loadAuto(true));
   const accountChanged = key => {
     if (!account(key)) return;
-    const manualKey = $('booking-account').value;
-    const autoKey = $('booking-auto-account').value;
-    const manualMembers = selectedMembers('booking-contacts');
-    const autoMembers = selectedMembers('booking-auto-contacts');
     rememberAccount(key);
     // The three account dropdowns share the user's explicit selection.
     for (const id of ['booking-qr-account', 'booking-account', 'booking-auto-account'])
       $(id).value = key;
-    updateContacts('booking-contacts', key, manualKey === key ? manualMembers : []);
-    updateContacts('booking-auto-contacts', key, autoKey === key ? autoMembers : []);
+    // A different account must not retain passengers selected for the old one.
+    updateContacts('booking-contacts', key);
+    updateContacts('booking-auto-contacts', key);
     renderQr();
   };
   for (const id of ['booking-qr-account', 'booking-account', 'booking-auto-account'])
