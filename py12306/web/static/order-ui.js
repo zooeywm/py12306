@@ -63,6 +63,19 @@
   let state = {accounts: [], tasks: [], order: {state: 'idle'}};
   let current = null;
   let lastListSignature = '';
+  // Save only the account key, never credentials, cookies or passenger data.
+  const accountPreferenceKey = 'py12306:selected-account';
+  const readPreferredAccount = () => {
+    try { return window.localStorage.getItem(accountPreferenceKey) || ''; }
+    catch (_) { return ''; }
+  };
+  let preferredAccountKey = readPreferredAccount();
+  const rememberAccount = key => {
+    if (!state.accounts.some(a => a.key === key)) return;
+    preferredAccountKey = key;
+    try { window.localStorage.setItem(accountPreferenceKey, key); }
+    catch (_) { /* Private browsing may disable persistent storage. */ }
+  };
   const option = (value, label) => {
     const el = document.createElement('option');
     el.value = String(value); el.textContent = label;
@@ -114,11 +127,14 @@
     }
   };
   const selectedMembers = id => [...$(id).querySelectorAll('input:checked')].map(el => el.value);
-  const chooseAccount = (id, previous) => {
+  const chooseAccount = (id, previous = '', fallback = '') => {
     const select = $(id);
     select.replaceChildren(option('', '请选择账号'));
     for (const a of state.accounts) select.append(option(a.key, a.label + (a.ready ? '（已登录）' : '（未登录）')));
-    select.value = state.accounts.some(a => a.key === previous) ? previous : '';
+    // Keep the current choice on refresh. Otherwise recover the task account,
+    // the browser's last explicit choice, or the first configured account.
+    select.value = [previous, fallback, preferredAccountKey, state.accounts[0]?.key]
+      .find(key => state.accounts.some(a => a.key === key)) || '';
   };
   const updateContacts = (targetId, accountKey, chosen = []) => {
     const root = $(targetId);
@@ -135,11 +151,14 @@
     });
   };
   const currentTask = () => state.tasks.find(t => String(t.index) === $('booking-task').value);
-  const loadAuto = () => {
+  const loadAuto = (taskChanged = false) => {
     const task = currentTask();
     const rule = task?.auto_order || {};
-    chooseAccount('booking-auto-account', rule.account_key || '');
-    updateContacts('booking-auto-contacts', $('booking-auto-account').value, rule.members || []);
+    const previousAccount = taskChanged ? '' : $('booking-auto-account').value;
+    const configuredAccount = rule.enabled ? rule.account_key : '';
+    chooseAccount('booking-auto-account', previousAccount, configuredAccount);
+    const chosen = taskChanged ? (rule.members || []) : selectedMembers('booking-auto-contacts');
+    updateContacts('booking-auto-contacts', $('booking-auto-account').value, chosen);
     $('booking-auto-info').textContent = task
       ? `席别：${task.seats.join(' / ') || '未配置'} · 当前状态：${rule.enabled ? '自动抢票已开启' : '未开启'}${task.enabled ? '' : '（任务已暂停）'}`
       : '尚未创建查询任务';
@@ -167,11 +186,7 @@
         const prevManual = $('booking-account').value;
         const prevTask = $('booking-task').value;
         const prevLogin = $('booking-qr-account').value;
-        chooseAccount('booking-qr-account', prevLogin);
-        if (!$('booking-qr-account').value && state.accounts.length) {
-          const qrAccount = state.accounts.find(a => a.qr);
-          $('booking-qr-account').value = (qrAccount || state.accounts[0]).key;
-        }
+        chooseAccount('booking-qr-account', prevLogin, state.accounts.find(a => a.qr)?.key);
         chooseAccount('booking-account', prevManual);
         updateContacts('booking-contacts', $('booking-account').value, selectedMembers('booking-contacts'));
         const taskSelect = $('booking-task');
@@ -185,7 +200,6 @@
     } catch (e) { $('booking-message').textContent = '获取下单状态失败：' + e.message; }
   };
 
-  $('booking-qr-account').addEventListener('change', renderQr);
   $('booking-qr-refresh').addEventListener('click', async () => {
     const key = $('booking-qr-account').value;
     if (!key) return;
@@ -211,9 +225,23 @@
       await refreshState(true);
     } catch (e) { $('booking-message').textContent = e.message; }
   });
-  $('booking-task').addEventListener('change', loadAuto);
-  $('booking-account').addEventListener('change', () => updateContacts('booking-contacts', $('booking-account').value));
-  $('booking-auto-account').addEventListener('change', () => updateContacts('booking-auto-contacts', $('booking-auto-account').value));
+  $('booking-task').addEventListener('change', () => loadAuto(true));
+  const accountChanged = key => {
+    if (!account(key)) return;
+    const manualKey = $('booking-account').value;
+    const autoKey = $('booking-auto-account').value;
+    const manualMembers = selectedMembers('booking-contacts');
+    const autoMembers = selectedMembers('booking-auto-contacts');
+    rememberAccount(key);
+    // The three account dropdowns share the user's explicit selection.
+    for (const id of ['booking-qr-account', 'booking-account', 'booking-auto-account'])
+      $(id).value = key;
+    updateContacts('booking-contacts', key, manualKey === key ? manualMembers : []);
+    updateContacts('booking-auto-contacts', key, autoKey === key ? autoMembers : []);
+    renderQr();
+  };
+  for (const id of ['booking-qr-account', 'booking-account', 'booking-auto-account'])
+    $(id).addEventListener('change', () => accountChanged($(id).value));
   $('booking-cancel').addEventListener('click', () => {current = null; $('booking-manual').style.display = 'none';});
   $('booking-confirm').addEventListener('click', async () => {
     if (!current) return;
