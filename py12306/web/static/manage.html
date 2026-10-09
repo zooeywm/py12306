@@ -526,12 +526,13 @@
     availabilityFetching=true;
     try{
       const data=await api('/manage/api/availability');
-      $('availability-status').textContent='从本地缓存更新，筛选与排序适用于所有任务。';
       renderAvailability(data.groups||[]);
       // Do not rebuild the editor. Only update the train choices from cache.
       if(!$('editor').classList.contains('hide'))refreshTrainPickers();
     }catch(e){
-      $('availability-status').textContent='获取余票失败：'+e.message;
+      for(const {details,panel} of availabilityPanels.values()){
+        if(details.open){panel.replaceChildren();addText(panel,'p','获取余票失败：'+e.message,'muted');}
+      }
     }finally{availabilityFetching=false;}
   }
   function closeEditor(){
@@ -769,6 +770,10 @@
       await api(url,method,body);
       if(method==='PUT'&&previousName&&previousName!==body.job_name){
         if(expandedTasks.delete(previousName))expandedTasks.add(body.job_name);
+        if(taskFilters.has(previousName)){
+          taskFilters.set(body.job_name,taskFilters.get(previousName));
+          taskFilters.delete(previousName);
+        }
       }
       closeEditor();
       await refresh();
@@ -800,7 +805,6 @@
     if(editing===null){$('editor').classList.add('hide');$('editor-parking').append($('editor'));}
   });
   $('refresh').addEventListener('click',()=>{refresh();refreshAvailability();});
-  $('availability-refresh').addEventListener('click',refreshAvailability);
   refresh();refreshAvailability();
   setInterval(()=>{if(!document.hidden)refreshAvailability();},5000);
 })();
