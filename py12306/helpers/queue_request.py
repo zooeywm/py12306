@@ -27,3 +27,26 @@ def format_queue_train_date(travel_date):
     return '{} {} {:02d} {} 00:00:00 GMT+0800 (中国标准时间)'.format(
         _WEEKDAYS[departure.weekday()], _MONTHS[departure.month - 1],
         departure.day, departure.year)
+
+
+def select_queue_left_ticket(form):
+    """Pick the token used for the Web getQueueCount leftTicket parameter.
+
+    Web clients can read queryLeftTicketRequestDTO.ypInfoDetail for this
+    endpoint while using top-level leftTicketStr for final queue submission.
+    Return a source label and difference flag but never log the token value.
+    """
+    if not isinstance(form, dict):
+        raise ValueError('missing ticket form')
+    dto = form.get('queryLeftTicketRequestDTO')
+    if not isinstance(dto, dict):
+        raise ValueError('missing ticket request DTO')
+    detail = dto.get('ypInfoDetail')
+    top_level = form.get('leftTicketStr')
+    has_detail = isinstance(detail, str) and bool(detail.strip())
+    has_top = isinstance(top_level, str) and bool(top_level.strip())
+    if has_detail:
+        return detail, 'ypInfoDetail', has_top and detail != top_level
+    if has_top:
+        return top_level, 'leftTicketStr', False
+    raise ValueError('no queue ticket token available')
