@@ -395,6 +395,18 @@ class Order:
         try:
             form = self.user_ins.ticket_info_for_passenger_form
             dto = form['queryLeftTicketRequestDTO']
+            # Compare only field presence and equality; never log token values.
+            queue_detail = dto.get('ypInfoDetail')
+            top_level = form.get('leftTicketStr')
+            detail_present = isinstance(queue_detail, str) and bool(queue_detail.strip())
+            top_present = isinstance(top_level, str) and bool(top_level.strip())
+            comparison = ('不同' if queue_detail != top_level else '相同') if (
+                detail_present and top_present) else '不可比较'
+            OrderLog.add_quick_log(
+                '排队字段诊断：ypInfoDetail={}；leftTicketStr={}；两者={}'.format(
+                    '存在' if detail_present else '缺失或为空',
+                    '存在' if top_present else '缺失或为空', comparison)
+            ).flush()
             data = {
                 'train_date': format_queue_train_date(self.query_ins.left_date),
                 'train_no': dto['train_no'],

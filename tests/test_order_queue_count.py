@@ -82,6 +82,23 @@ class QueueSupplyTests(unittest.TestCase):
         self.assertIsNone(order.session.last_post_data)
         self.assertIn('车次与余票查询结果不一致', order.failure_reason)
 
+    def test_field_comparison_logs_only_presence_and_equality(self):
+        order = self.make_order(FakeResponse({'status': True, 'data': {
+            'ticket': '', 'op_1': 'true', 'op_2': 'false'}}))
+        form = order.user_ins.ticket_info_for_passenger_form
+        form['queryLeftTicketRequestDTO']['ypInfoDetail'] = 'PRIVATE_DETAIL_TOKEN'
+        form['leftTicketStr'] = 'PRIVATE_TOP_TOKEN'
+        with patch('py12306.order.order.OrderLog.add_quick_log') as log:
+            self.assertFalse(order.get_queue_count())
+        messages = ' '.join(call.args[0] for call in log.call_args_list)
+        self.assertIn('ypInfoDetail=存在', messages)
+        self.assertIn('leftTicketStr=存在', messages)
+        self.assertIn('两者=不同', messages)
+        self.assertNotIn('PRIVATE_DETAIL_TOKEN', messages)
+        self.assertNotIn('PRIVATE_TOP_TOKEN', messages)
+        # Diagnostic-only: do not silently change the actual booking request.
+        self.assertEqual(order.session.last_post_data['leftTicket'], 'PRIVATE_TOP_TOKEN')
+
     def test_queue_valid_abundant(self):
         self.check({'status': True, 'data': {
             'ticket': '充足', 'countT': '0', 'op_2': False}}, True)
