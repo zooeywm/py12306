@@ -197,36 +197,59 @@ class Order:
         return self.normal_order()
 
     def normal_order(self):
+        # Track a human-readable stage without persisting cookies, tokens or ID numbers.
+        self.failure_stage = '提交请求'
+        self.failure_reason = '12306 未接受初始订单请求'
         order_request_res = self.submit_order_request()
-        if order_request_res == -1:
-            return self.order_did_success()
-        elif not order_request_res:
-            return
+        # -1 was historically treated as a successful order without an order ID.
+        # No early step counts as success until 12306 returns a real order number.
+        if order_request_res is not True:
+            return False
+
+        self.failure_stage = '初始化订单页面'
+        self.failure_reason = '订单页面初始化未完成'
         init_res, self.is_slide, init_html = self.user_ins.request_init_dc_page()
         if not init_res:
-            return
+            self.failure_reason = ('订单页面初始化失败：' +
+                                   (getattr(self.user_ins, 'order_page_error', '') or
+                                    '12306 未返回有效订单页面'))
+            return False
+
         slide_info = {}
         if self.is_slide:
+            self.failure_stage = '滑块验证码'
+            self.failure_reason = '滑块验证码未通过'
             try:
                 slide_info = Browser().request_init_slide(self.session, init_html)
                 if not slide_info.get('session_id') or not slide_info.get('sig'):
-                    raise RuntimeError("Order failed")
+                    raise RuntimeError('Slide verification failed')
             except Exception:
                 OrderLog.add_quick_log('滑动验证码识别失败').flush()
-                return
+                return False
             OrderLog.add_quick_log('滑动验证码识别成功').flush()
+
+        self.failure_stage = '订单信息校验'
+        self.failure_reason = '订单信息校验未通过，具体原因见终端日志'
         if not self.check_order_info(slide_info):
-            return
+            return False
+        self.failure_stage = '排队余票校验'
+        self.failure_reason = '排队余票校验失败或无可用余票，具体原因见终端日志'
         if not self.get_queue_count():
-            return
+            return False
+        self.failure_stage = '确认排队'
+        self.failure_reason = '12306 未接受排队确认，具体原因见终端日志'
         if not self.confirm_single_for_queue():
-            return
+            return False
+        self.failure_stage = '等待订单号'
+        self.failure_reason = '排队结束前未取得订单号，具体原因见终端日志'
         order_id = self.query_order_wait_time()
-        if order_id:  # 发送通知
-            self.order_id = order_id
-            self.order_did_success()
-            return True
-        return False
+        if not order_id:
+            return False
+        self.order_id = order_id
+        self.failure_stage = ''
+        self.failure_reason = ''
+        self.order_did_success()
+        return True
 
     def order_did_success(self):
         OrderLog.print_ticket_did_ordered(self.order_id)
