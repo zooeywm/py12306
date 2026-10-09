@@ -245,7 +245,9 @@ class BookingManager:
                 if changed:
                     _save_jobs(current)
             return True
-        except (OSError, ValueError, RuntimeError, ImportError):
+        except Exception:
+            # Keep the in-memory pause, and tell Web users to disable the task
+            # manually before restarting if its persisted update failed.
             return False
 
     def _worker(self, job, user, account_key):
