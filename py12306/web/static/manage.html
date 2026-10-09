@@ -387,24 +387,20 @@
     // “有” is available, but the exact quantity is unknown.
     return null;
   }
-  const hasInput=id=>$(id).value!=='';
-  function rowMatchesFilters(item){
-    if(hasInput('filter-depart-from') && (!item.departure||item.departure<$('filter-depart-from').value))return false;
-    if(hasInput('filter-depart-to') && (!item.departure||item.departure>$('filter-depart-to').value))return false;
+  function rowMatchesFilters(item,config){
+    const v=config.values;
+    const has=id=>v[id]!=='';
+    if(has('depart-from')&&(!item.departure||item.departure<v['depart-from']))return false;
+    if(has('depart-to')&&(!item.departure||item.departure>v['depart-to']))return false;
     const duration=durationMinutes(item.duration);
-    if(hasInput('filter-duration-min')&&(duration===null||duration<Number($('filter-duration-min').value)))return false;
-    if(hasInput('filter-duration-max')&&(duration===null||duration>Number($('filter-duration-max').value)))return false;
-    if(hasInput('filter-seat')&&item.seat!==$('filter-seat').value)return false;
+    if(has('duration-min')&&(duration===null||duration<Number(v['duration-min'])))return false;
+    if(has('duration-max')&&(duration===null||duration>Number(v['duration-max'])))return false;
+    if(has('seat')&&item.seat!==v.seat)return false;
     const price=priceRange(item.price);
-    if(hasInput('filter-price-min')&&(price===null||price.max<Number($('filter-price-min').value)))return false;
-    if(hasInput('filter-price-max')&&(price===null||price.min>Number($('filter-price-max').value)))return false;
-    const state=$('filter-quantity-state').value;
-    if(state==='available'&&!item.available)return false;
-    if(state==='unavailable'&&item.available)return false;
-    if(hasInput('filter-quantity-min')){
-      const quantity=quantityNumber(item);
-      if(quantity===null||quantity<Number($('filter-quantity-min').value))return false;
-    }
+    if(has('price-min')&&(price===null||price.max<Number(v['price-min'])))return false;
+    if(has('price-max')&&(price===null||price.min>Number(v['price-max'])))return false;
+    if(v['quantity-state']==='available'&&!item.available)return false;
+    if(v['quantity-state']==='unavailable'&&item.available)return false;
     return true;
   }
   function sortValue(item,key){
@@ -427,7 +423,8 @@
     if(['无','无票','不可预订','候补','--','*'].includes(value))return [1,0];
     return [0,0]; // Unknown values always stay at the end.
   }
-  function compareRows(a,b){
+  function compareRows(a,b,config){
+    const sortKey=config.sortKey,sortDirection=config.sortDirection;
     if(sortKey==='quantity'){
       const [rankA,numA]=quantitySortRank(a),[rankB,numB]=quantitySortRank(b);
       if(rankA===0&&rankB!==0)return 1;
@@ -436,7 +433,6 @@
       if(diff!==0)return sortDirection==='desc'?-diff:diff;
     }else{
       const va=sortValue(a,sortKey),vb=sortValue(b,sortKey);
-      // Unknown prices/durations stay last in both orders.
       if(va===null&&vb!==null)return 1;
       if(vb===null&&va!==null)return -1;
       if(va!==null&&vb!==null){
@@ -448,24 +444,25 @@
       String(a.train||'').localeCompare(String(b.train||''),'zh-CN',{numeric:true}) ||
       String(a.seat||'').localeCompare(String(b.seat||''),'zh-CN');
   }
-  function sortHeader(parent,name,key){
+  function sortHeader(parent,name,key,config,rerender){
     const th=document.createElement('th');
     if(key){
-      th.setAttribute('aria-sort',sortKey===key?(sortDirection==='asc'?'ascending':'descending'):'none');
+      th.setAttribute('aria-sort',config.sortKey===key?(config.sortDirection==='asc'?'ascending':'descending'):'none');
       const button=document.createElement('button');button.type='button';
-      button.className='sort-button'+(sortKey===key?' is-active':'');
+      button.className='sort-button'+(config.sortKey===key?' is-active':'');
       button.title=`按${name}排序`;
-      button.textContent=name+(sortKey===key?(sortDirection==='asc'?' ↑':' ↓'):' ↕');
+      button.textContent=name+(config.sortKey===key?(config.sortDirection==='asc'?' ↑':' ↓'):' ↕');
       button.addEventListener('click',()=>{
-        if(sortKey===key)sortDirection=sortDirection==='asc'?'desc':'asc';
-        else{sortKey=key;sortDirection='asc';}
-        renderAvailability(availabilityCache);
+        if(config.sortKey===key)config.sortDirection=config.sortDirection==='asc'?'desc':'asc';
+        else{config.sortKey=key;config.sortDirection='asc';}
+        rerender();
       });
       th.append(button);
     }else th.textContent=name;
     parent.append(th);
   }
   function renderTaskAvailability(task,details,title,root){
+    const config=getTaskFilter(task.job_name);
     const group=availabilityCache.find(group=>group.job_name===task.job_name);
     const routes=group?.routes||[];
     const total=routes.reduce((n,route)=>n+(route.rows||[]).length,0);
@@ -482,7 +479,7 @@
     for(const route of routes){
       addText(root,'h3',`${task.job_name} · ${route.date} ${route.left} → ${route.arrive}`,'route-title');
       const raw=route.rows||[];
-      const rows=raw.filter(rowMatchesFilters).sort(compareRows);
+      const rows=raw.filter(row=>rowMatchesFilters(row,config)).sort((a,b)=>compareRows(a,b,config));
       const visible=rows.filter(row=>row.available).length;
       addText(root,'p',`更新于 ${route.updated_at} · 显示 ${rows.length}/${raw.length} 个车次/席别组合 · ${visible} 个可售`,'muted');
       const scroller=document.createElement('div');scroller.className='table-scroll';
@@ -490,7 +487,7 @@
       const head=document.createElement('thead'),header=document.createElement('tr');
       [['车次',null],['车型',null],['服务标识',null],['出发','departure'],['到达',null],
         ['总时间','duration'],['席别','seat'],['价格','price'],['余票','quantity'],['最近一次变化',null]]
-        .forEach(([name,key])=>sortHeader(header,name,key));
+        .forEach(([name,key])=>sortHeader(header,name,key,config,()=>renderTaskAvailability(task,details,title,root)));
       head.append(header);table.append(head);
       const body=document.createElement('tbody');
       for(const item of rows){
@@ -523,22 +520,6 @@
       if(details.isConnected)renderTaskAvailability(task,details,title,panel);
     }
   }
-  filterIds.forEach(id=>{for(const event of ['input','change'])$(id).addEventListener(event,()=>renderAvailability(availabilityCache));});
-  // The switch mirrors the existing availability dropdown rather than applying
-  // a second potentially contradictory filter. Polling does not reset either.
-  $('filter-only-available').addEventListener('change',()=>{
-    $('filter-quantity-state').value=$('filter-only-available').checked?'available':'';
-    renderAvailability(availabilityCache);
-  });
-  $('filter-quantity-state').addEventListener('change',()=>{
-    $('filter-only-available').checked=$('filter-quantity-state').value==='available';
-  });
-  $('availability-clear').addEventListener('click',()=>{
-    $('filter-only-available').checked=false;
-    filterIds.forEach(id=>$(id).value='');
-    sortKey=defaultSort.key;sortDirection=defaultSort.direction;
-    renderAvailability(availabilityCache);
-  });
   let availabilityFetching=false;
   async function refreshAvailability(){
     if(availabilityFetching)return;
