@@ -792,13 +792,7 @@
   });
   $('refresh').addEventListener('click',()=>{refresh();refreshAvailability();});
   $('availability-refresh').addEventListener('click',refreshAvailability);
-  const suggestions=(id,target)=>{
-    let timer;$(id).addEventListener('input',()=>{clearTimeout(timer);const q=$(id).value.trim();if(!q){$(target).replaceChildren();return;}
-      timer=setTimeout(async()=>{try{const data=await api('/manage/api/stations?q='+encodeURIComponent(q));const list=$(target);list.replaceChildren();
-        data.stations.forEach(name=>{const item=document.createElement('option');item.value=name;list.append(item);});}catch(e){}},220);
-    });
-  };
-  suggestions('left','left-options');suggestions('arrive','arrive-options');refresh();refreshAvailability();
+  refresh();refreshAvailability();
   setInterval(()=>{if(!document.hidden)refreshAvailability();},5000);
 })();
 </script>
