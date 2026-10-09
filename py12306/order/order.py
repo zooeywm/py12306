@@ -460,8 +460,10 @@ class Order:
                 return '其他值'
 
             return fail('12306 排队接口 ticket 字段不可解析：{}'
-                        '（op_1={}, op_2={}；已停止本次下单，不以排队人数替代余票数）'.format(
-                            ticket_shape, safe_flag('op_1'), safe_flag('op_2')))
+                        '（countT 字段{}；op_1={}, op_2={}；已停止本次下单，'
+                        '不以排队人数替代余票数）'.format(
+                            ticket_shape, '存在' if 'countT' in payload else '缺失',
+                            safe_flag('op_1'), safe_flag('op_2')))
         tickets = [part.strip() for part in ticket_raw.split(',')]
         ticket_number = tickets[0]
         if ticket_number not in ('有', '充足'):
